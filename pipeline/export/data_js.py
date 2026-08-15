@@ -296,6 +296,7 @@ def build_payload(analysis: Analysis, stress: StressTest | None = None) -> dict[
             "f2_threshold": config.F2_SIMILAR_THRESHOLD,
             "censoring_pct": config.CENSORING_PCT,
             "model": a.model_spec.label,
+            "plot_max_time_h": _clean(config.PLOT_MAX_TIME_H),
         },
         "quality": {
             "apis": list(quality.apis),
@@ -333,6 +334,14 @@ def build_payload(analysis: Analysis, stress: StressTest | None = None) -> dict[
             },
         },
         "grid_h": _clean(a.time_grid),
+        "time_grid": {
+            "n_points": a.time_grid_info.n_points,
+            "n_raw_times": a.time_grid_info.n_raw_times,
+            "n_distinct_vectors": a.time_grid_info.n_distinct_vectors,
+            "max_shift_min": _clean(a.time_grid_info.max_shift_h * 60.0),
+            "reconciled": a.time_grid_info.collapsed,
+            "notes": list(a.time_grid_info.notes),
+        },
         "profiles": profiles,
         "design_points": _frame(
             a.design_points,

@@ -24,6 +24,7 @@ import numpy as np
 from pipeline.design.matrix import ModelSpec, build_model_matrix, term_names
 from pipeline.equivalence.f2 import similarity_f2
 from pipeline.profiles.fits import weibull
+from pipeline.profiles.grid import paired_finite
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class FoldResult:
     f2: float
     f2_valid: bool
     profile_note: str = ""
+    n_points_compared: int = 0
     in_hull: bool = True
 
 
@@ -136,6 +138,7 @@ def leave_one_formulation_out(
         f2_value = float("nan")
         f2_ok = False
         note = ""
+        n_compared = 0
         key = (int(case_ids[i]), str(grades[i]))
 
         if can_rebuild and key in observed_profiles:
@@ -144,14 +147,33 @@ def leave_one_formulation_out(
                 time_grid, predicted["weibull_f_inf"], td, predicted["weibull_beta"]
             )
             obs_curve = observed_profiles[key]
-            if len(obs_curve) == len(time_grid):
-                rmse_pct = float(np.sqrt(np.mean((pred_curve - obs_curve) ** 2)))
+            if len(obs_curve) != len(time_grid):
+                note = "observed profile length does not match the time grid"
+            else:
+                # Only where the formulation was actually measured. A profile
+                # that stopped early, or whose sampling times did not reach a
+                # grid point, has no value there -- and averaging over the gap
+                # silently turns the whole fold into NaN, which is how this
+                # number quietly became unreportable on ragged data.
+                obs_pts, pred_pts = paired_finite(obs_curve, pred_curve)
+                if obs_pts.size:
+                    rmse_pct = float(np.sqrt(np.mean((pred_pts - obs_pts) ** 2)))
+                    n_compared = int(obs_pts.size)
+                    if n_compared < len(time_grid):
+                        note = (
+                            f"compared on {n_compared} of {len(time_grid)} grid points; "
+                            "the rest lie outside this formulation's measured window"
+                        )
+                else:
+                    note = (
+                        "no grid point where both the observed and predicted profile "
+                        "have a value; profile error is not computable for this fold"
+                    )
                 f2_result = similarity_f2(time_grid, obs_curve, pred_curve)
                 f2_value = f2_result.value
                 f2_ok = f2_result.valid
-                note = f2_result.note
-            else:
-                note = "observed profile length does not match the time grid"
+                if not f2_result.valid:
+                    note = (note + "; " if note else "") + f2_result.note
 
         folds.append(
             FoldResult(
@@ -163,6 +185,7 @@ def leave_one_formulation_out(
                 f2=f2_value,
                 f2_valid=f2_ok,
                 profile_note=note,
+                n_points_compared=n_compared,
             )
         )
 
@@ -176,6 +199,25 @@ def leave_one_formulation_out(
     }
     profile_errors = [f.profile_rmse_pct for f in folds if np.isfinite(f.profile_rmse_pct)]
     f2_values = [f.f2 for f in folds if f.f2_valid and np.isfinite(f.f2)]
+
+    uncomputable = [f for f in folds if not np.isfinite(f.profile_rmse_pct)]
+    if uncomputable:
+        names = ", ".join(f"case {f.case}/{f.grade}" for f in uncomputable[:6])
+        notes.append(
+            f"{len(uncomputable)} of {len(folds)} fold(s) have no computable "
+            f"profile-space error: {names}"
+            + (" and others" if len(uncomputable) > 6 else "")
+            + ". They are excluded from the summary RMSE, so that figure describes "
+            f"only the {len(folds) - len(uncomputable)} fold(s) it could be computed on."
+        )
+    if folds and not profile_errors:
+        notes.append(
+            "Profile-space error could not be computed for ANY formulation. This "
+            "usually means the profiles share no common measured timepoints, so "
+            "predicted and observed curves never overlap. Check the timepoint section "
+            "of the data-quality report; the summary error is reported as unavailable "
+            "rather than as a number."
+        )
 
     return CrossValidation(
         responses=tuple(responses),

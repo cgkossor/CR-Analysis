@@ -17,6 +17,8 @@ from pathlib import Path
 
 from pipeline.analysis import SURFACE_RESPONSES, Analysis, run_analysis
 from pipeline.design.report import render_markdown as design_markdown
+from pipeline.diagnostics import render_console as diag_console
+from pipeline.diagnostics import write as write_diagnostics
 from pipeline.export.data_js import build_payload, write_data_js
 from pipeline.io.load import load_database
 from pipeline.io.quality import render_markdown as quality_markdown
@@ -133,6 +135,11 @@ def main(argv: list[str] | None = None) -> int:
     _write_reports(analysis, stress, reports)
     print(f"Reports -> {reports}")
 
+    # Written last so it can see everything, printed first thing a reader needs.
+    diagnostics = write_diagnostics(analysis, stress, reports)
+    print(f"Diagnostics -> {reports / 'diagnostics.md'} (+ .json)")
+
+
     payload = build_payload(analysis, stress)
     data_path = write_data_js(payload, Path(args.dashboard) / "data.js")
     print(f"Dashboard data -> {data_path}")
@@ -157,6 +164,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"DETERMINISM FAILED: {first} != {second}", file=sys.stderr)
             return 3
         print(f"Determinism OK: data.js sha256 {first[:16]}... reproduced exactly")
+
+    # Printed last so it is the final thing on screen: anything that would make
+    # the run untrustworthy should be the reader's last impression, not scrolled
+    # off the top behind a list of written files.
+    print()
+    print(diag_console(diagnostics))
 
     if analysis.quality.is_synthetic:
         print(

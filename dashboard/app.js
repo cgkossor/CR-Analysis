@@ -21,6 +21,10 @@
     if (text !== undefined && text !== null) { node.textContent = String(text); }
     return node;
   }
+  /* A missing number renders as an em dash, never as "nan" or "NaN%": a
+   * prediction shown beside the literal text "nan% error" looks like a broken
+   * page, and worse, invites the reader to ignore the error estimate entirely
+   * (G6 requires one to be present and legible). */
   function fmt(v, dp) {
     if (v === null || v === undefined || (typeof v === "number" && !isFinite(v))) return "—";
     if (typeof v !== "number") return String(v);
@@ -320,7 +324,7 @@
     });
 
     var ch = new Chart(560, 340);
-    ch.scales([0, D.grid_h[D.grid_h.length - 1]], [0, 105]).axes("time (h)", "% released");
+    ch.scales([0, D.meta.plot_max_time_h], [0, 105]).axes("time (h)", "% released");
     ch.hline(D.meta.censoring_pct, "#b4541f", "5 4");
     rows.forEach(function (p, i) {
       if (showReps) {
@@ -583,7 +587,7 @@
     if (!set) return;
 
     var ch = new Chart(560, 340);
-    ch.scales([0, D.grid_h[D.grid_h.length - 1]], [0, 105]).axes("time (h)", "% released");
+    ch.scales([0, D.meta.plot_max_time_h], [0, 105]).axes("time (h)", "% released");
     set.members.slice(0, 8).forEach(function (m, i) {
       var p = profileFor(m.case, m.grade);
       if (!p) return;
@@ -676,7 +680,7 @@
     var hull = inHull(api, hpmc);
     var inVisc = true;
     var times = [];
-    for (var t = 0; t <= 24; t += 0.25) times.push(t);
+    for (var t = 0; t <= D.meta.plot_max_time_h; t += 0.25) times.push(t);
     var pred = predictProfile(api, hpmc, lac, lv, times);
 
     if (!hull) {
@@ -690,7 +694,7 @@
     }
 
     var ch = new Chart(540, 330);
-    ch.scales([0, 24], [0, 105]).axes("time (h)", "% released");
+    ch.scales([0, D.meta.plot_max_time_h], [0, 105]).axes("time (h)", "% released");
     ch.hline(D.meta.censoring_pct, "#b4541f", "5 4");
     /* Nearest measured neighbours, always shown (G3, G6 traceability). */
     var neigh = nearest(api, hpmc, lv, 3);
@@ -976,9 +980,14 @@
 
     $("subtitle").textContent = D.quality.apis.join(", ") + " · " + D.quality.n_ids +
       " formulations × " + D.quality.n_replicates + " replicates · model " + D.meta.model;
-    $("cv-badge").innerHTML = "<small>cross-validated error</small><b>" +
-      fmt(D.validation.profile_rmse_pct, 2) + "%</b><small>released, LOFO ×" +
-      D.validation.n_folds + "</small>";
+    var cvOk = D.validation.profile_rmse_pct !== null &&
+      isFinite(D.validation.profile_rmse_pct);
+    $("cv-badge").innerHTML = cvOk
+      ? "<small>cross-validated error</small><b>" +
+        fmt(D.validation.profile_rmse_pct, 2) + "%</b><small>released, LOFO ×" +
+        D.validation.n_folds + "</small>"
+      : "<small>cross-validated error</small><b>unavailable</b>" +
+        "<small>see Guidelines</small>";
     $("foot-meta").textContent = "Generated from " + D.meta.source_file +
       " · vessel " + D.meta.vessel_volume_ml + " mL · viscosity source: " +
       D.meta.viscosity_source + " · seed " + D.meta.seed +

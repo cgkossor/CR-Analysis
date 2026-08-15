@@ -79,6 +79,23 @@ R2_GAP_FLAG: Final[float] = 0.20
 #: AC4 - adequate precision below this is flagged.
 ADEQUATE_PRECISION_FLAG: Final[float] = 4.0
 
+# --- Timepoint reconciliation -----------------------------------------------
+# Real sampling does not happen at exact times: a nominal 60-minute pull lands
+# at 59.5 or 61 depending on the operator. Two timestamps within this distance
+# are treated as the same nominal sample when building the comparison grid.
+#
+# The tolerance is absolute near t=0 and proportional afterwards, because a
+# one-minute slip at the 2-minute pull is a genuinely different timepoint while
+# at the 24-hour pull it is nothing.
+TIME_CLUSTER_ABS_H: Final[float] = 0.5 / 60.0
+TIME_CLUSTER_REL: Final[float] = 0.01
+
+# --- Plotting ----------------------------------------------------------------
+#: Upper limit of the time axis on every plot, in hours. Fixed rather than
+#: data-driven so profiles stay comparable between runs and between databases,
+#: and so a 24 h endpoint is not pinned against the frame edge.
+PLOT_MAX_TIME_H: Final[float] = 25.0
+
 # --- Determinism (G10) ------------------------------------------------------
 #: Seed for every resample, CV split and optimiser start in this pipeline.
 #: Distinct from any seed used to generate a placeholder database.

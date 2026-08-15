@@ -18,6 +18,7 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from pipeline import config
 from pipeline.analysis import Analysis
 from pipeline.stress.subsets import StressTest
 
@@ -147,6 +148,7 @@ def render_all(analysis: Analysis, stress: StressTest, out_dir: Path) -> list[Fi
                 color=_colour(key[1], i),
                 label=label,
             )
+        ax.set_xlim(0, config.PLOT_MAX_TIME_H)
         ax.set_xlabel("time (h)")
         ax.set_ylabel("% released")
         ax.set_title("Different compositions, different grades, same profile")
@@ -292,7 +294,8 @@ def render_all(analysis: Analysis, stress: StressTest, out_dir: Path) -> list[Fi
             if g != grade:
                 continue
             ax.plot(analysis.time_grid, curve, lw=1.1, alpha=0.85, color=_colour(grade))
-        ax.axhline(80, color="#888", ls=":", lw=0.9)
+        ax.axhline(config.CENSORING_PCT, color="#888", ls=":", lw=0.9)
+        ax.set_xlim(0, config.PLOT_MAX_TIME_H)
         ax.set_title(grade)
         ax.set_xlabel("time (h)")
     axes[0].set_ylabel("% released")

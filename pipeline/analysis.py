@@ -25,6 +25,7 @@ from pipeline.equivalence.sets import (
 )
 from pipeline.io.load import Database
 from pipeline.io.quality import QualityReport, build_quality_report
+from pipeline.profiles.grid import TimeGrid, build_time_grid, project_onto_grid
 from pipeline.profiles.table import build_design_point_table, build_replicate_table
 from pipeline.responses.space import ResponseSpace, characterise
 from pipeline.surfaces.model import BoxCoxResult, box_cox_analysis, sequential_sum_of_squares
@@ -73,15 +74,29 @@ class Analysis:
     equivalence_summary: EquivalenceSummary
     lever_effects: pd.DataFrame
     time_grid: np.ndarray
+    time_grid_info: TimeGrid
     observed_profiles: dict[tuple[int, str], np.ndarray]
     model_spec: ModelSpec
 
 
-def _mean_profiles(db: Database, grid: np.ndarray) -> dict[tuple[int, str], np.ndarray]:
+def _mean_profiles(
+    db: Database, grid: np.ndarray
+) -> dict[tuple[int, str], np.ndarray]:
+    """Mean profile per design point, interpolated onto the canonical grid.
+
+    Interpolating rather than reindexing is what makes ragged sampling work. A
+    plain reindex only matches exact timestamps, so a profile sampled at 61.0 min
+    contributes nothing at a 60.0 min grid point and the value becomes NaN — which
+    then poisons every statistic computed across the vector.
+    """
     out: dict[tuple[int, str], np.ndarray] = {}
     for (case, grade), group in db.profiles.groupby(["case", "grade"]):
-        series = group.groupby("time_h")["pct_released"].mean().reindex(grid)
-        out[(int(case), str(grade))] = series.to_numpy(dtype=float)
+        mean_by_time = group.groupby("time_h")["pct_released"].mean().sort_index()
+        out[(int(case), str(grade))] = project_onto_grid(
+            mean_by_time.index.to_numpy(dtype=float),
+            mean_by_time.to_numpy(dtype=float),
+            grid,
+        )
     return out
 
 
@@ -179,7 +194,13 @@ def run_analysis(db: Database) -> Analysis:
             mats, values, ["linear", "quadratic", "special_cubic"]
         )
 
-    grid = np.sort(db.profiles["time_h"].unique())
+    # Recover the nominal schedule rather than assuming exact timestamps match.
+    vectors = [
+        g["time_h"].to_numpy(dtype=float)
+        for _, g in db.profiles.groupby(["case", "grade", "replicate"])
+    ]
+    grid_info = build_time_grid(vectors)
+    grid = grid_info.times_h
     observed = _mean_profiles(db, grid)
 
     cv = leave_one_formulation_out(
@@ -225,6 +246,7 @@ def run_analysis(db: Database) -> Analysis:
         equivalence_summary=eq_summary,
         lever_effects=levers,
         time_grid=grid,
+        time_grid_info=grid_info,
         observed_profiles=observed,
         model_spec=spec,
     )
