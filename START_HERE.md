@@ -4,18 +4,23 @@ This is an ordinary Python project. Nothing unusual, nothing to configure.
 
 ## 0. Get the code
 
-**From GitHub** — no account needed. On the repository page, green **Code**
-button → **Download ZIP**. Unzip it.
+**From GitHub** — no account needed:
 
-You will get a folder named something like **`CR-main`** (GitHub appends the
-branch name). That folder is the project.
+    https://github.com/cgkossor/CR-Analysis
+
+Green **Code** button → **Download ZIP**. Or go straight to the file:
+
+    https://github.com/cgkossor/CR-Analysis/archive/refs/heads/main.zip
+
+Unzip it. You get a folder named **`CR-Analysis-main`** — GitHub appends the
+branch name. That folder is the project.
 
 **From a zip sent by email** — unzip it; the folder is called `CR`.
 
 ## 1. Open the right folder
 
 **File → Open Folder…** and choose the folder that directly contains
-`pyproject.toml` — `CR-main`, *not* the folder you unzipped it into.
+`pyproject.toml` — `CR-Analysis-main`, *not* the folder you unzipped it into.
 
 This matters. Open the parent by mistake and VS Code will not find `.vscode/`,
 so none of the tasks or the test setup appear and nothing below will work.
