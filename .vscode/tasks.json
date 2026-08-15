@@ -1,0 +1,56 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "1. Install dependencies (once)",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "pip", "install", "-r", "requirements.txt"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "2. Run analysis on a database",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "pipeline.run", "--input", "${input:databaseFile}"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
+      "label": "3. Open the dashboard",
+      "type": "shell",
+      "windows": { "command": "start", "args": ["", "dashboard\\index.html"] },
+      "osx": { "command": "open", "args": ["dashboard/index.html"] },
+      "linux": { "command": "xdg-open", "args": ["dashboard/index.html"] },
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent" }
+    },
+    {
+      "label": "Run tests",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "pytest", "-q"],
+      "problemMatcher": [],
+      "group": { "kind": "test", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Build email packages",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "pipeline.package"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "databaseFile",
+      "type": "promptString",
+      "description": "Path to the dissolution workbook (.xlsx)",
+      "default": "CR_matrix_tablet_dissolution_PLACEHOLDER (1).xlsx"
+    }
+  ]
+}

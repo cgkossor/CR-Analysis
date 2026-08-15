@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CR Matrix Tablet — Formulator Workbench</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="provenance" class="provenance" hidden></div>
+
+<header class="masthead">
+  <div>
+    <h1>Controlled-Release Matrix Tablet Workbench</h1>
+    <p class="sub" id="subtitle">loading…</p>
+  </div>
+  <div class="badge" id="cv-badge" title="Cross-validated prediction error attached to every prediction (G6)"></div>
+</header>
+
+<nav class="tabs" id="tabs" role="tablist"></nav>
+
+<main id="panels">
+
+  <section class="panel" data-tab="explorer">
+    <h2>Database Explorer</h2>
+    <p class="lede">Every measured profile. Select formulations to overlay; the table is the
+      source of truth that every prediction elsewhere links back to.</p>
+    <div class="controls">
+      <label>Grade <select id="ex-grade"></select></label>
+      <label>Censoring <select id="ex-censoring">
+        <option value="">all</option><option value="none">reaches 80%</option>
+        <option value="partial">partial</option><option value="full">never reaches 80%</option>
+      </select></label>
+      <label><input type="checkbox" id="ex-replicates"> show individual replicates</label>
+    </div>
+    <div class="split">
+      <div id="ex-chart" class="chart"></div>
+      <div id="ex-table" class="tablewrap"></div>
+    </div>
+  </section>
+
+  <section class="panel" data-tab="metrics" hidden>
+    <h2>Analysis &amp; Metrics</h2>
+    <p class="lede">Per-formulation release metrics with validity flags. Censored values are
+      shown as bounds, never as blanks or as coerced numbers.</p>
+    <div id="metrics-quality" class="cards"></div>
+    <div id="metrics-table" class="tablewrap"></div>
+  </section>
+
+  <section class="panel" data-tab="design" hidden>
+    <h2>Design Diagnostics</h2>
+    <p class="lede">Properties of where the experiments sit, computed before any response was
+      modelled.</p>
+    <div id="design-mixture" class="callout"></div>
+    <div id="design-models" class="tablewrap"></div>
+    <h3>Aliasing</h3>
+    <div id="design-alias"></div>
+    <h3>Lack of fit</h3>
+    <div id="design-lof" class="callout"></div>
+    <h3>Prediction variance across the design space</h3>
+    <div id="design-fds" class="chart"></div>
+  </section>
+
+  <section class="panel" data-tab="surfaces" hidden>
+    <h2>Response Surfaces</h2>
+    <p class="lede">Fitted on design-point means. Vessel replicates are subsamples of one
+      batch, not independent runs.</p>
+    <div class="controls">
+      <label>Response <select id="sf-response"></select></label>
+    </div>
+    <div id="sf-summary" class="cards"></div>
+    <div id="sf-boxcox" class="callout"></div>
+    <div id="sf-sequential" class="tablewrap"></div>
+    <div id="sf-coefficients" class="tablewrap"></div>
+    <div class="split">
+      <div id="sf-residuals" class="chart"></div>
+      <div id="sf-leverage" class="chart"></div>
+    </div>
+    <h3>What the levers do</h3>
+    <div id="sf-levers"></div>
+  </section>
+
+  <section class="panel" data-tab="equivalence" hidden>
+    <h2>Equivalence Sets</h2>
+    <p class="lede">Formulations whose measured profiles are similar by f2. This is where
+      formulation freedom lives — and where it runs out.</p>
+    <div id="eq-headline" class="callout"></div>
+    <div class="controls">
+      <label>Target <select id="eq-target"></select></label>
+    </div>
+    <div class="split">
+      <div id="eq-chart" class="chart"></div>
+      <div id="eq-table" class="tablewrap"></div>
+    </div>
+  </section>
+
+  <section class="panel" data-tab="stress" hidden>
+    <h2>Design Stress Test</h2>
+    <p class="lede">How few runs would have reached the same conclusions.</p>
+    <div id="st-headline" class="callout"></div>
+    <div id="st-chart" class="chart"></div>
+    <div id="st-table" class="tablewrap"></div>
+    <h3>Recommended point set for a new API</h3>
+    <div id="st-points" class="tablewrap"></div>
+  </section>
+
+  <section class="panel" data-tab="formulator" hidden>
+    <h2>Formulator Tool</h2>
+    <p class="lede">Forward prediction and inverse design. Every result carries its
+      cross-validated error and its in/out-of-design-space status.</p>
+
+    <h3>Forward: predict a profile</h3>
+    <div class="controls">
+      <label>API wt% <input type="number" id="fw-api" value="35" min="0" max="100" step="0.5"></label>
+      <label>HPMC wt% <input type="number" id="fw-hpmc" value="40" min="0" max="100" step="0.5"></label>
+      <label>Lactose wt% <input type="number" id="fw-lac" value="25" min="0" max="100" step="0.5"></label>
+      <label>Grade <select id="fw-grade"></select></label>
+      <label>Dose target (mg) <input type="number" id="fw-dose" value="105" min="1" step="1"></label>
+    </div>
+    <div id="fw-warn"></div>
+    <div class="split">
+      <div id="fw-chart" class="chart"></div>
+      <div id="fw-out"></div>
+    </div>
+
+    <h3>Inverse: find compositions for a target</h3>
+    <p class="hint">Ranked by a Derringer–Suich desirability across the key responses. The
+      weights are yours to set — they are not hidden inside the ranking.</p>
+    <div class="controls">
+      <label>Target t50 (h) <input type="number" id="iv-t50" value="8" min="0.1" step="0.5"></label>
+      <label>Target % at 24 h <input type="number" id="iv-p24" value="90" min="1" max="100" step="1"></label>
+      <label>weight: t50 <input type="range" id="iv-w-t50" min="0" max="3" step="0.1" value="1"><span id="iv-w-t50-v">1.0</span></label>
+      <label>weight: 24 h release <input type="range" id="iv-w-p24" min="0" max="3" step="0.1" value="1"><span id="iv-w-p24-v">1.0</span></label>
+    </div>
+    <div id="iv-out"></div>
+    <h3>Sweet spot</h3>
+    <p class="hint">Composition region satisfying every constraint at the selected grade.
+      Shaded where all constraints hold simultaneously.</p>
+    <div class="controls">
+      <label>Grade <select id="iv-grade"></select></label>
+      <label>t50 tolerance (±h) <input type="number" id="iv-tol" value="2" min="0.1" step="0.5"></label>
+    </div>
+    <div id="iv-overlay" class="chart"></div>
+  </section>
+
+  <section class="panel" data-tab="guidelines" hidden>
+    <h2>Guidelines &amp; Limitations</h2>
+    <div id="gl-body"></div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <span id="foot-meta"></span>
+</footer>
+
+<script src="data.js"></script>
+<script src="model.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

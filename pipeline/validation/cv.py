@@ -1,0 +1,192 @@
+"""Leave-one-formulation-out cross-validation (AC6).
+
+The unit left out is the **formulation**, meaning every replicate of a
+(case, grade) design point leaves together. Splitting replicates across the
+train/test boundary would leak near-identical profiles into training and inflate
+apparent accuracy -- and since this number is what G6 attaches to every
+prediction on the dashboard, a leaked CV figure is a guardrail violation wearing
+the costume of compliance.
+
+Error is reported in two spaces, because they answer different questions:
+
+* **parameter space** -- how well the surface predicts Weibull parameters;
+* **profile space** -- what that means in % released, plus f2 between the
+  predicted and observed curves, which is the quantity a formulator actually
+  reasons about.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from pipeline.design.matrix import ModelSpec, build_model_matrix, term_names
+from pipeline.equivalence.f2 import similarity_f2
+from pipeline.profiles.fits import weibull
+
+
+@dataclass(frozen=True)
+class FoldResult:
+    """Prediction for one held-out formulation."""
+
+    case: int
+    grade: str
+    observed: dict[str, float]
+    predicted: dict[str, float]
+    profile_rmse_pct: float
+    f2: float
+    f2_valid: bool
+    profile_note: str = ""
+    in_hull: bool = True
+
+
+@dataclass(frozen=True)
+class CrossValidation:
+    """Leave-one-formulation-out results across the whole design."""
+
+    responses: tuple[str, ...]
+    folds: tuple[FoldResult, ...]
+    rmse_by_response: dict[str, float]
+    mae_by_response: dict[str, float]
+    profile_rmse_pct: float
+    profile_rmse_pct_worst: float
+    median_f2: float
+    n_folds: int
+    notes: tuple[str, ...] = field(default=())
+
+    def fold_for(self, case: int, grade: str) -> FoldResult | None:
+        for fold in self.folds:
+            if fold.case == case and fold.grade == grade:
+                return fold
+        return None
+
+
+def leave_one_formulation_out(
+    composition: np.ndarray,
+    process: np.ndarray,
+    responses: dict[str, np.ndarray],
+    spec: ModelSpec,
+    *,
+    kept_terms: list[str] | None = None,
+    time_grid: np.ndarray,
+    observed_profiles: dict[tuple[int, str], np.ndarray],
+    case_ids: np.ndarray,
+    grades: np.ndarray,
+) -> CrossValidation:
+    """Refit the surface with each formulation held out, then predict it.
+
+    ``responses`` maps a response name to its per-design-point values. Weibull
+    reconstruction requires ``log10_td``, ``weibull_beta`` and ``weibull_f_inf``
+    to be present; without them profile-space error is skipped rather than
+    approximated.
+    """
+    comp = np.asarray(composition, dtype=float)
+    proc = np.asarray(process, dtype=float)
+    n = comp.shape[0]
+
+    all_labels = term_names(spec)
+    keep_idx = (
+        list(range(len(all_labels)))
+        if kept_terms is None
+        else [i for i, name in enumerate(all_labels) if name in set(kept_terms)]
+    )
+
+    full_matrix = build_model_matrix(comp, proc, spec)[:, keep_idx]
+    notes: list[str] = []
+
+    can_rebuild = all(
+        key in responses for key in ("log10_td", "weibull_beta", "weibull_f_inf")
+    )
+    if not can_rebuild:
+        notes.append(
+            "Profile-space error not computed: the Weibull parameter set "
+            "(log10_td, weibull_beta, weibull_f_inf) is not fully present."
+        )
+
+    folds: list[FoldResult] = []
+    errors: dict[str, list[float]] = {k: [] for k in responses}
+
+    for i in range(n):
+        train = np.ones(n, dtype=bool)
+        train[i] = False
+        x_train = full_matrix[train]
+        x_test = full_matrix[i : i + 1]
+
+        if np.linalg.matrix_rank(x_train) < x_train.shape[1]:
+            notes.append(
+                f"Fold {i} skipped: removing design point (case {int(case_ids[i])}, "
+                f"{grades[i]}) makes the model inestimable. The design has no slack "
+                "for this term set."
+            )
+            continue
+
+        observed: dict[str, float] = {}
+        predicted: dict[str, float] = {}
+        for name, values in responses.items():
+            y = np.asarray(values, dtype=float)
+            beta, *_ = np.linalg.lstsq(x_train, y[train], rcond=None)
+            pred = float((x_test @ beta)[0])
+            observed[name] = float(y[i])
+            predicted[name] = pred
+            if np.isfinite(pred) and np.isfinite(y[i]):
+                errors[name].append(pred - y[i])
+
+        rmse_pct = float("nan")
+        f2_value = float("nan")
+        f2_ok = False
+        note = ""
+        key = (int(case_ids[i]), str(grades[i]))
+
+        if can_rebuild and key in observed_profiles:
+            td = 10.0 ** predicted["log10_td"]
+            pred_curve = weibull(
+                time_grid, predicted["weibull_f_inf"], td, predicted["weibull_beta"]
+            )
+            obs_curve = observed_profiles[key]
+            if len(obs_curve) == len(time_grid):
+                rmse_pct = float(np.sqrt(np.mean((pred_curve - obs_curve) ** 2)))
+                f2_result = similarity_f2(time_grid, obs_curve, pred_curve)
+                f2_value = f2_result.value
+                f2_ok = f2_result.valid
+                note = f2_result.note
+            else:
+                note = "observed profile length does not match the time grid"
+
+        folds.append(
+            FoldResult(
+                case=int(case_ids[i]),
+                grade=str(grades[i]),
+                observed=observed,
+                predicted=predicted,
+                profile_rmse_pct=rmse_pct,
+                f2=f2_value,
+                f2_valid=f2_ok,
+                profile_note=note,
+            )
+        )
+
+    rmse_by = {
+        name: float(np.sqrt(np.mean(np.square(vals)))) if vals else float("nan")
+        for name, vals in errors.items()
+    }
+    mae_by = {
+        name: float(np.mean(np.abs(vals))) if vals else float("nan")
+        for name, vals in errors.items()
+    }
+    profile_errors = [f.profile_rmse_pct for f in folds if np.isfinite(f.profile_rmse_pct)]
+    f2_values = [f.f2 for f in folds if f.f2_valid and np.isfinite(f.f2)]
+
+    return CrossValidation(
+        responses=tuple(responses),
+        folds=tuple(folds),
+        rmse_by_response=rmse_by,
+        mae_by_response=mae_by,
+        profile_rmse_pct=float(np.sqrt(np.mean(np.square(profile_errors))))
+        if profile_errors
+        else float("nan"),
+        profile_rmse_pct_worst=float(np.max(profile_errors)) if profile_errors else float("nan"),
+        median_f2=float(np.median(f2_values)) if f2_values else float("nan"),
+        n_folds=len(folds),
+        notes=tuple(notes),
+    )

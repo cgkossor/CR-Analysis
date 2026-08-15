@@ -1,0 +1,151 @@
+"""The dashboard must actually render, not merely parse.
+
+A runtime error inside ``boot()`` leaves a blank page while every static check
+still passes, so the page is loaded in a real DOM and every tab is clicked.
+
+Requires ``jsdom``. It is not vendored into the repo -- the dashboard itself
+ships no dependencies (G7) and a test-only Node package has no business living
+next to it. Install with ``npm install jsdom`` anywhere on NODE_PATH, or run
+``npm install jsdom`` in the repo root. The test skips, loudly, when it is
+absent; it never passes by default.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+DASHBOARD = ROOT / "dashboard"
+NODE = shutil.which("node")
+
+_SMOKE = r"""
+const { JSDOM, VirtualConsole } = require("jsdom");
+const fs = require("fs"), path = require("path");
+const dash = process.argv[1];
+const errors = [];
+const vc = new VirtualConsole();
+vc.on("jsdomError", e => errors.push("jsdomError: " + e.message));
+vc.on("error", (...a) => errors.push("console.error: " + a.join(" ")));
+const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
+  { runScripts: "dangerously", virtualConsole: vc });
+const w = dom.window;
+for (const f of ["data.js", "model.js", "app.js"]) {
+  try { w.eval(fs.readFileSync(path.join(dash, f), "utf8")); }
+  catch (e) { errors.push(f + " threw: " + e.message); }
+}
+try { w.document.dispatchEvent(new w.Event("DOMContentLoaded")); }
+catch (e) { errors.push("boot threw: " + e.message); }
+const d = w.document;
+const tabs = {};
+for (const b of Array.from(d.querySelectorAll("#tabs button"))) {
+  try {
+    b.dispatchEvent(new w.Event("click", { bubbles: true }));
+    const name = b.getAttribute("data-target");
+    const panel = d.querySelector('.panel[data-tab="' + name + '"]');
+    tabs[name] = { chars: panel.textContent.trim().length,
+                   svg: panel.querySelectorAll("svg").length };
+  } catch (e) { errors.push("tab threw: " + e.message); }
+}
+process.stdout.write(JSON.stringify({
+  tabs,
+  nTabs: d.querySelectorAll("#tabs button").length,
+  provenanceShown: !d.getElementById("provenance").hidden,
+  cvBadge: (d.getElementById("cv-badge").textContent || "").replace(/\s+/g, " ").trim(),
+  g1Gate: d.body.innerHTML.indexOf("Insufficient data") >= 0,
+  rows: d.querySelectorAll("tbody tr").length,
+  errors,
+}));
+"""
+
+EXPECTED_TABS = {
+    "explorer",
+    "metrics",
+    "design",
+    "surfaces",
+    "equivalence",
+    "stress",
+    "formulator",
+    "guidelines",
+}
+
+
+def _have_jsdom() -> bool:
+    if NODE is None:
+        return False
+    probe = subprocess.run(
+        [NODE, "-e", "require.resolve('jsdom')"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=ROOT,
+    )
+    return probe.returncode == 0
+
+
+@pytest.fixture(scope="module")
+def rendered() -> dict:
+    if NODE is None:
+        pytest.skip("node is not installed")
+    if not (DASHBOARD / "data.js").exists():
+        pytest.skip("dashboard/data.js not generated; run python -m pipeline.run first")
+    if not _have_jsdom():
+        pytest.skip("jsdom not installed (npm install jsdom) - dashboard render not verified")
+
+    result = subprocess.run(
+        [NODE, "-e", _SMOKE, str(DASHBOARD)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+        cwd=ROOT,
+    )
+    assert result.returncode == 0, f"smoke harness failed: {result.stderr[:2000]}"
+    return json.loads(result.stdout)
+
+
+def test_page_boots_without_errors(rendered: dict) -> None:
+    assert rendered["errors"] == [], f"dashboard raised: {rendered['errors']}"
+
+
+def test_every_tab_renders_content(rendered: dict) -> None:
+    assert rendered["nTabs"] == len(EXPECTED_TABS)
+    assert set(rendered["tabs"]) == EXPECTED_TABS
+    for name, info in rendered["tabs"].items():
+        # "Handles the single-API case without empty panels" is an explicit
+        # acceptance criterion, so an empty panel is a failure, not a nuance.
+        assert info["chars"] > 400, f"tab {name} rendered almost nothing ({info['chars']} chars)"
+
+
+def test_charts_render_where_expected(rendered: dict) -> None:
+    for name in ("explorer", "design", "surfaces", "equivalence", "stress", "formulator"):
+        assert rendered["tabs"][name]["svg"] >= 1, f"tab {name} rendered no chart"
+
+
+def test_provenance_banner_is_shown_for_synthetic_data(rendered: dict) -> None:
+    data = (DASHBOARD / "data.js").read_text(encoding="utf-8")
+    if '"is_synthetic": true' in data:
+        assert rendered["provenanceShown"], (
+            "database declares itself synthetic but the page shows no provenance banner"
+        )
+
+
+def test_cross_validated_error_is_always_visible(rendered: dict) -> None:
+    """G6: no prediction is displayed without its error estimate."""
+    assert "%" in rendered["cvBadge"], f"CV badge missing: {rendered['cvBadge']!r}"
+    assert "LOFO" in rendered["cvBadge"]
+
+
+def test_solubility_claims_are_gated_with_one_api(rendered: dict) -> None:
+    """G1: with a single API loaded, the cross-API section must render as gated."""
+    data = json.loads(
+        (DASHBOARD / "data.js").read_text(encoding="utf-8").split("=", 1)[1].rsplit(";", 1)[0]
+    )
+    if len(data["quality"]["apis"]) < 2:
+        assert rendered["g1Gate"], (
+            "only one API is loaded but no data-sufficiency gate was rendered"
+        )

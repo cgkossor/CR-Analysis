@@ -1,0 +1,19 @@
+# Normalise line endings so a clone behaves identically on Windows, macOS and
+# Linux. Without this, git rewrites LF to CRLF on Windows checkouts, which
+# changes file bytes and would make the determinism check (G10) compare a
+# freshly generated data.js against a differently-encoded one.
+* text=auto eol=lf
+
+# Binary: never touch these.
+*.xlsx binary
+*.xls  binary
+*.xlsm binary
+*.png  binary
+*.zip  binary
+
+# Generated payload — large, machine-written, and not useful in a diff.
+dashboard/data.js linguist-generated=true -diff
+
+# Keep GitHub's language stats about the analysis code, not the vendored page.
+dashboard/*.js linguist-detectable=true
+outputs/** linguist-documentation=true

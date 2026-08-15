@@ -1,0 +1,10 @@
+# Runtime dependencies for the analysis pipeline.
+#   python -m pip install -r requirements.txt
+# Needs an internet connection once, to download these. After that the pipeline
+# and the dashboard both work entirely offline.
+numpy>=1.26
+pandas>=2.2
+scipy>=1.11
+statsmodels>=0.14
+matplotlib>=3.8
+openpyxl>=3.1
