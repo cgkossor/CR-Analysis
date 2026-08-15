@@ -234,7 +234,13 @@ def characterise(
     )
 
     # Cluster on |Pearson|: distance 0 means "perfectly redundant".
-    abs_corr = pearson.abs().to_numpy()
+    #
+    # `copy=True` is required, not defensive. Under pandas copy-on-write -- the
+    # default from pandas 3.0 -- `.to_numpy()` hands back a read-only view of the
+    # frame's own buffer, and `fill_diagonal` mutates in place, so without the
+    # copy this raises "underlying array is read-only" on newer pandas while
+    # working fine on older versions.
+    abs_corr = np.array(pearson.abs().to_numpy(), dtype=float, copy=True)
     np.fill_diagonal(abs_corr, 1.0)
     distance = np.clip(1.0 - abs_corr, 0.0, None)
     np.fill_diagonal(distance, 0.0)
