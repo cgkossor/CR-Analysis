@@ -23,6 +23,7 @@ from pipeline import config
 from pipeline.analysis import Analysis
 from pipeline.diagnostics import Diagnostics
 from pipeline.glossary import as_dict as glossary_dict
+from pipeline.optimize.goals import as_payload as goal_payload
 from pipeline.profiles.grid import project_onto_grid
 from pipeline.stress.subsets import StressTest
 
@@ -139,6 +140,14 @@ def _doe_payload(analysis: Analysis) -> dict[str, Any]:
             "spec_note": ra.response.spec.note,
             "model": ra.spec.label,
             "terms": list(ra.kept_terms),
+            # Coefficients travel with the response so the formulator tool can
+            # search on the quantities the goals are actually written in --
+            # t50 and % released -- rather than on Weibull parameters.
+            "coefficients": [
+                {"name": c.name, "estimate": _clean(c.estimate)}
+                for c in ra.fit.coefficients
+            ],
+            "process_power": ra.spec.process_power,
             "n_obs": table.n_obs,
             "n_missing": ra.response.n_missing,
             "coverage_note": ra.response.coverage_note,
@@ -565,6 +574,7 @@ def build_payload(
         "equivalence": equivalence,
         "levers": _frame(a.lever_effects),
         "doe": _doe_payload(a),
+        "goals": goal_payload(),
     }
 
     if diagnostics is not None:

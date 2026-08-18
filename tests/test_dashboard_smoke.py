@@ -34,7 +34,7 @@ vc.on("error", (...a) => errors.push("console.error: " + a.join(" ")));
 const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
   { runScripts: "dangerously", virtualConsole: vc });
 const w = dom.window;
-for (const f of ["data.js", "model.js", "doe.js", "app.js"]) {
+for (const f of ["data.js", "model.js", "doe.js", "formulator.js", "app.js"]) {
   try { w.eval(fs.readFileSync(path.join(dash, f), "utf8")); }
   catch (e) { errors.push(f + " threw: " + e.message); }
 }
@@ -181,7 +181,7 @@ vc.on("error", (...a) => errors.push("console.error: " + a.join(" ")));
 const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
   { runScripts: "dangerously", virtualConsole: vc });
 const w = dom.window;
-for (const f of ["data.js", "model.js", "doe.js", "app.js"]) {
+for (const f of ["data.js", "model.js", "doe.js", "formulator.js", "app.js"]) {
   w.eval(fs.readFileSync(path.join(dash, f), "utf8"));
 }
 w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
@@ -256,3 +256,20 @@ def test_doe_tab_leads_with_plots_and_takeaways(rendered: dict) -> None:
         f"only {doe['svg']} charts on the DoE tab; contour, interaction, traces, "
         "Pareto and half-normal should all render"
     )
+
+
+def test_formulator_offers_goals_not_raw_weights(rendered: dict) -> None:
+    """Issue 13: balancing three components and tuning weights by hand is the
+    problem, not the interface. The tool fixes the drug load and picks the rest."""
+    html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
+    assert 'id="iv-goal"' in html, "no goal selector; weights are still the interface"
+    assert 'id="iv-api"' in html, "drug load is not the fixed input"
+    for retired in ('id="iv-w-t50"', 'id="iv-w-p24"'):
+        assert retired not in html, f"{retired} still present; raw weight sliders remain"
+
+
+def test_equivalence_is_framed_as_substitution(rendered: dict) -> None:
+    """Issue 12: 'pick a group, get a plot' is not the question anyone asks."""
+    html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
+    assert 'id="eq-guidance"' in html, "no substitution guidance"
+    assert 'id="eq-map"' in html, "no design-space map of where freedom exists"

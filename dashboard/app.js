@@ -730,52 +730,158 @@
     var tw = el("div", { class: "tablewrap" }); tw.appendChild(t);
     $("sf-levers").appendChild(tw);
   }
-
   /* ---------------------------------------------------- equivalence */
+  /* Reframed around the question actually asked. Picking a group and getting a
+   * plot answers "what is in this group". A formulator asks "this one has to
+   * change — what else will do", and needs to be told when the answer is
+   * nothing at all. */
   function renderEquivalence() {
-    var s = D.equivalence.summary;
-    $("eq-headline").innerHTML = "<b>Headline.</b> " + esc(s.demonstration) +
-      "<br><br>Targets: " + s.n_targets + " · with a cross-grade equivalent: <b>" +
-      s.cross_grade_count + "</b> · largest set: " + s.max_set_size +
-      " · median set: " + fmt(s.median_set_size, 0) +
-      (s.isolated.length ? " · <b>no equivalent at all:</b> " + s.isolated.map(function (i) {
-        return "case " + i.case + "/" + i.grade;
-      }).join(", ") : "");
+    var summary = D.equivalence.summary;
+    var isolated = summary.isolated.map(function (i) {
+      return "case " + i.case + "/" + i.grade;
+    });
+    $("eq-headline").innerHTML =
+      "<b>" + summary.cross_grade_count + " of " + summary.n_targets + "</b> " +
+      "measured formulations have a substitute at a <b>different grade</b>, so a " +
+      "target profile usually does not dictate one composition. Largest set: " +
+      summary.max_set_size + " formulations; median " +
+      fmt(summary.median_set_size, 0) + "." +
+      (isolated.length
+        ? "<br><br><b>No substitute at all:</b> " + esc(isolated.join(", ")) +
+          ". At the edge of the achievable release space there is one way to do " +
+          "it, and reformulating around it is not an option."
+        : "");
 
-    var target = $("eq-target").value;
-    var parts = target.split("|");
+    var target = $("eq-target").value.split("|");
+    var crossOnly = $("eq-cross-only").checked;
     var set = null;
     D.equivalence.sets.forEach(function (e) {
-      if (String(e.case) === parts[0] && e.grade === parts[1]) set = e;
+      if (String(e.case) === target[0] && e.grade === target[1]) set = e;
     });
     if (!set) return;
 
-    var ch = new Chart(560, 340);
-    ch.scales([D.meta.plot_min_time_h, D.meta.plot_max_time_h], [D.meta.plot_min_release_pct, D.meta.plot_max_release_pct]).axes("time (h)", "% released");
-    set.members.slice(0, 8).forEach(function (m, i) {
+    var self = null;
+    var subs = [];
+    set.members.forEach(function (m) {
+      if (m.case === set.case && m.grade === set.grade) { self = m; return; }
+      if (crossOnly && m.grade === set.grade) return;
+      subs.push(m);
+    });
+
+    var guide = $("eq-guidance");
+    if (!subs.length) {
+      guide.innerHTML = '<div class="callout danger"><b>No substitute.</b> ' +
+        "Nothing else in the design matches case " + set.case + "/" + set.grade +
+        (crossOnly ? " at a different grade" : "") + " within f2 &ge; " +
+        D.meta.f2_threshold + ". If this formulation has to change, the release " +
+        "profile changes with it.</div>";
+    } else {
+      var best = subs[0];
+      var swap = [];
+      if (self) {
+        if (Math.abs(best.hpmc_wt - self.hpmc_wt) > 0.5) {
+          swap.push((best.hpmc_wt > self.hpmc_wt ? "+" : "") +
+            fmt(best.hpmc_wt - self.hpmc_wt, 1) + " wt% HPMC");
+        }
+        if (Math.abs(best.api_wt - self.api_wt) > 0.5) {
+          swap.push((best.api_wt > self.api_wt ? "+" : "") +
+            fmt(best.api_wt - self.api_wt, 1) + " wt% API");
+        }
+        if (best.grade !== set.grade) {
+          swap.push(set.grade + " to " + best.grade);
+        }
+      }
+      guide.innerHTML = '<div class="callout ok"><b>' + subs.length +
+        " substitute" + (subs.length === 1 ? "" : "s") + ".</b> The closest is " +
+        "<b>case " + best.case + " / " + best.grade + "</b> at f2 " +
+        fmt(best.f2, 0) +
+        (swap.length ? " — a change of " + esc(swap.join(", ")) + "." : ".") +
+        " Every one carries the same cross-validated error, " +
+        fmt(D.validation.profile_rmse_pct, 2) + "% released.</div>";
+    }
+
+    var ch = new Chart(560, 330);
+    ch.scales([D.meta.plot_min_time_h, D.meta.plot_max_time_h],
+              [D.meta.plot_min_release_pct, D.meta.plot_max_release_pct])
+      .axes("time (h)", "% released");
+    ch.hline(D.meta.censoring_pct, "#b4541f", "5 4");
+
+    var series = [];
+    var shown = (self ? [self] : []).concat(subs.slice(0, 6));
+    shown.forEach(function (m, i) {
       var p = profileFor(m.case, m.grade);
       if (!p) return;
-      var isTarget = m.case === set.case && m.grade === set.grade;
-      ch.line(D.grid_h, p.mean_pct, colourFor(m.grade, i), {
-        width: isTarget ? 2.6 : 1.3, opacity: isTarget ? 1 : 0.8,
-        title: "case " + m.case + " / " + m.grade + " (f2 " + fmt(m.f2, 0) + ")"
+      var isSelf = self && m.case === self.case && m.grade === self.grade;
+      ch.line(D.grid_h, p.mean_pct, colourFor(m.grade, i),
+              { width: isSelf ? 2.8 : 1.5, opacity: isSelf ? 1 : 0.85 });
+      series.push({
+        xs: D.grid_h, ys: p.mean_pct, colour: colourFor(m.grade, i),
+        path: ch.lastPath, baseWidth: isSelf ? 2.8 : 1.5,
+        baseOpacity: isSelf ? 1 : 0.85,
+        label: (isSelf ? "TARGET " : "") + "case " + m.case + " / " + m.grade +
+               (isSelf ? "" : "  f2 " + fmt(m.f2, 0))
       });
     });
-    ch.mount($("eq-chart"));
+    ch.interactive(series).mount($("eq-chart"));
 
     $("eq-table").innerHTML = "";
     $("eq-table").appendChild(table([
-      { key: "who", label: "formulation", html: true }, { key: "f2", label: "f2", num: true },
-      { key: "api", label: "API%", num: true }, { key: "hpmc", label: "HPMC%", num: true },
-      { key: "lac", label: "lactose%", num: true },
+      { key: "who", label: "substitute", html: true },
+      { key: "f2", label: "f2", num: true },
+      { key: "dh", label: "change in HPMC%", num: true },
+      { key: "da", label: "change in API%", num: true },
+      { key: "grade", label: "grade change" },
       { key: "cv", label: "CV RMSE %", num: true }
-    ], set.members.map(function (m) {
+    ], subs.map(function (m) {
       return {
-        who: sourceLink(m.case, m.grade), f2: fmt(m.f2, 1),
-        api: fmt(m.api_wt, 1), hpmc: fmt(m.hpmc_wt, 1), lac: fmt(m.lactose_wt, 1),
+        who: sourceLink(m.case, m.grade),
+        f2: fmt(m.f2, 1),
+        dh: self ? fmt(m.hpmc_wt - self.hpmc_wt, 1) : "—",
+        da: self ? fmt(m.api_wt - self.api_wt, 1) : "—",
+        grade: m.grade === set.grade ? "same" : set.grade + " to " + m.grade,
         cv: fmt(m.cv_rmse_pct, 2)
       };
     })));
+
+    renderEquivalenceMap(set);
+  }
+
+  /* A map of where substitution is possible. Point size is the number of
+   * alternatives, so formulations with no latitude are visibly small rather
+   * than being a row someone has to notice is missing. */
+  function renderEquivalenceMap(selected) {
+    var counts = {};
+    D.equivalence.sets.forEach(function (e) {
+      counts[e.case + "|" + e.grade] = Math.max(e.members.length - 1, 0);
+    });
+    var maxCount = Math.max.apply(null, Object.keys(counts).map(function (k) {
+      return counts[k];
+    }).concat([1]));
+
+    var apis = D.design_points.map(function (p) { return p.api_wt; });
+    var hpmcs = D.design_points.map(function (p) { return p.hpmc_wt; });
+    var ch = new Chart(560, 350, { l: 56, r: 16, t: 16, b: 44 });
+    ch.scales(extent(apis, 0.08), extent(hpmcs, 0.08))
+      .axes("API (wt%)", "HPMC (wt%)");
+
+    D.design_points.forEach(function (p, i) {
+      var n = counts[p.case + "|" + p.grade] || 0;
+      var radius = 2.5 + 6 * (n / maxCount);
+      var isSel = selected && p.case === selected.case && p.grade === selected.grade;
+      ch.dots([p.api_wt], [p.hpmc_wt],
+              isSel ? "#1c2330" : colourFor(p.grade, i),
+              isSel ? radius + 2 : radius,
+              ["case " + p.case + " / " + p.grade + " — " + n + " substitute" +
+               (n === 1 ? "" : "s")]);
+    });
+    ch.mount($("eq-map"));
+
+    var legend = el("div", { class: "legend" });
+    legend.innerHTML =
+      "<span>Point size = number of substitutes (0 to " + maxCount + ").</span>" +
+      "<span>Small points have little formulation latitude.</span>" +
+      '<span><i style="background:#1c2330"></i>currently selected</span>';
+    $("eq-map").appendChild(legend);
   }
 
   /* --------------------------------------------------------- stress */
@@ -915,131 +1021,8 @@
   }
 
   /* Derringer–Suich one-sided/target desirability. */
-  function desirability(value, target, tolerance, weight) {
-    if (!isFinite(value)) return 0;
-    var dev = Math.abs(value - target) / Math.max(tolerance, 1e-9);
-    if (dev >= 1) return 0;
-    return Math.pow(1 - dev, Math.max(weight, 0.01));
-  }
 
-  function renderInverse() {
-    var tTarget = Number($("iv-t50").value);
-    var pTarget = Number($("iv-p24").value);
-    var wT = Number($("iv-w-t50").value), wP = Number($("iv-w-p24").value);
-    $("iv-w-t50-v").textContent = wT.toFixed(1);
-    $("iv-w-p24-v").textContent = wP.toFixed(1);
 
-    var grades = [];
-    D.design_points.forEach(function (p) {
-      if (!grades.some(function (g) { return g.grade === p.grade; })) {
-        grades.push({ grade: p.grade, lv: p.log10_visc });
-      }
-    });
-
-    var candidates = [];
-    for (var a = 10; a <= 60; a += 2.5) {
-      for (var h = 20; h <= 60; h += 2.5) {
-        var l = 100 - a - h;
-        if (l < 5 || l > 70) continue;
-        if (!inHull(a, h)) continue;
-        grades.forEach(function (g) {
-          var pred = predictProfile(a, h, l, g.lv, [24]);
-          var t50 = M.t50From(pred.td, pred.params.weibull_beta, pred.params.weibull_f_inf);
-          var p24 = pred.curve[0];
-          if (t50 === null) return;  // never reaches 50%: not a candidate
-          var d1 = desirability(t50, tTarget, Math.max(tTarget * 0.5, 1), wT);
-          var d2 = desirability(p24, pTarget, 25, wP);
-          var overall = (wT + wP) > 0 ? Math.pow(Math.pow(d1, wT) * Math.pow(d2, wP), 1 / (wT + wP)) : 0;
-          if (overall > 0.01) {
-            candidates.push({
-              api: a, hpmc: h, lac: l, grade: g.grade, t50: t50, p24: p24,
-              d: overall, td: pred.td, beta: pred.params.weibull_beta
-            });
-          }
-        });
-      }
-    }
-    candidates.sort(function (x, y) { return y.d - x.d; });
-
-    var out = $("iv-out"); out.innerHTML = "";
-    if (!candidates.length) {
-      out.innerHTML = '<div class="callout warn">No composition inside the tested design space ' +
-        "reaches this target. Widen the target, or treat it as outside what this design can " +
-        "support — the tool will not extrapolate to reach it (G3).</div>";
-      renderOverlay();
-      return;
-    }
-
-    /* Present equivalent candidates as a set, with trade-offs, not one answer. */
-    var top = candidates.slice(0, 12);
-    var best = top[0].d;
-    var tied = top.filter(function (c) { return c.d >= best - 0.02; });
-    out.innerHTML = '<div class="callout ok"><b>' + tied.length + " near-equivalent candidate" +
-      (tied.length === 1 ? "" : "s") + "</b> within 0.02 desirability of the best. They are not " +
-      "ranked apart by the data — choose on drug load, cost or compressibility. Every row " +
-      "carries the same cross-validated error: <b>" + fmt(D.validation.profile_rmse_pct, 2) +
-      "% released</b> (" + D.validation.n_folds + "-fold LOFO).</div>";
-
-    var tw = el("div", { class: "tablewrap" });
-    tw.appendChild(table([
-      { key: "d", label: "desirability", num: true },
-      { key: "api", label: "API%", num: true }, { key: "hpmc", label: "HPMC%", num: true },
-      { key: "lac", label: "lactose%", num: true }, { key: "grade", label: "grade" },
-      { key: "t50", label: "t50 (h)", num: true }, { key: "p24", label: "% at 24 h", num: true },
-      { key: "space", label: "design space" },
-      { key: "cv", label: "CV RMSE %", num: true },
-      { key: "src", label: "nearest measured", html: true }
-    ], top.map(function (c) {
-      var n = nearest(c.api, c.hpmc, 0, 1)[0];
-      return {
-        d: fmt(c.d, 3), api: fmt(c.api, 1), hpmc: fmt(c.hpmc, 1), lac: fmt(c.lac, 1),
-        grade: c.grade, t50: fmt(c.t50, 2), p24: fmt(c.p24, 1),
-        space: "inside hull", cv: fmt(D.validation.profile_rmse_pct, 2),
-        src: sourceLink(n.case, n.grade)
-      };
-    })));
-    out.appendChild(tw);
-    renderOverlay();
-  }
-
-  function renderOverlay() {
-    var tTarget = Number($("iv-t50").value);
-    var tol = Number($("iv-tol").value);
-    var pTarget = Number($("iv-p24").value);
-    var sel = $("iv-grade");
-    var lv = selectedLv(sel);
-
-    var ch = new Chart(560, 380, { l: 56, r: 16, t: 16, b: 44 });
-    ch.scales([5, 65], [15, 65]).axes("API (wt%)", "HPMC (wt%)");
-
-    var step = 1.25;
-    for (var a = 5; a <= 65; a += step) {
-      for (var h = 15; h <= 65; h += step) {
-        var l = 100 - a - h;
-        if (l < 5 || l > 70) continue;
-        if (!inHull(a, h)) continue;
-        var pred = predictProfile(a, h, l, lv, [24]);
-        var t50 = M.t50From(pred.td, pred.params.weibull_beta, pred.params.weibull_f_inf);
-        var okT = t50 !== null && Math.abs(t50 - tTarget) <= tol;
-        var okP = pred.curve[0] >= pTarget - 10;
-        if (okT && okP) ch.rect(a, h, a + step, h + step, "#2f7a55", 0.45);
-        else if (okT) ch.rect(a, h, a + step, h + step, "#3b7dd8", 0.16);
-        else if (okP) ch.rect(a, h, a + step, h + step, "#d9822b", 0.12);
-      }
-    }
-    D.design_points.filter(function (p) { return p.grade === sel.value; }).forEach(function (p) {
-      ch.dots([p.api_wt], [p.hpmc_wt], "#1c2330", 4, ["case " + p.case + " / " + p.grade]);
-    });
-    ch.mount($("iv-overlay"));
-    var legend = el("div", { class: "legend" });
-    legend.innerHTML =
-      '<span><i style="background:#2f7a55"></i>all constraints met</span>' +
-      '<span><i style="background:#3b7dd8;opacity:.5"></i>t50 only</span>' +
-      '<span><i style="background:#d9822b;opacity:.5"></i>24 h release only</span>' +
-      '<span><i style="background:#1c2330"></i>measured design point</span>' +
-      "<span>Blank = outside the tested composition hull; no prediction is offered there (G3).</span>";
-    $("iv-overlay").appendChild(legend);
-  }
 
   /* ----------------------------------------------------- guidelines */
   function renderGuidelines() {
@@ -1265,7 +1248,6 @@
       exGrade.appendChild(el("option", { value: g }, g));
     });
     gradeOptions($("fw-grade"));
-    gradeOptions($("iv-grade"));
 
     Object.keys(D.surfaces).forEach(function (k) {
       $("sf-response").appendChild(el("option", { value: k }, k));
@@ -1281,16 +1263,10 @@
     });
     $("sf-response").addEventListener("change", renderSurfaces);
     $("eq-target").addEventListener("change", renderEquivalence);
+    $("eq-cross-only").addEventListener("change", renderEquivalence);
     ["fw-api", "fw-hpmc", "fw-lac", "fw-grade", "fw-dose"].forEach(function (id) {
       $(id).addEventListener("input", renderForward);
       $(id).addEventListener("change", renderForward);
-    });
-    ["iv-t50", "iv-p24", "iv-w-t50", "iv-w-p24"].forEach(function (id) {
-      $(id).addEventListener("input", renderInverse);
-    });
-    ["iv-grade", "iv-tol"].forEach(function (id) {
-      $(id).addEventListener("input", renderOverlay);
-      $(id).addEventListener("change", renderOverlay);
     });
 
     renderExplorer();
@@ -1300,7 +1276,6 @@
     renderEquivalence();
     renderStress();
     renderForward();
-    renderInverse();
     renderGuidelines();
     renderDiagnostics();
 
@@ -1308,6 +1283,12 @@
      * than letting it reach into this closure. */
     if (window.CRDoe) {
       window.CRDoe.render(D, {
+        $: $, el: el, esc: esc, fmt: fmt, svgEl: svgEl,
+        Chart: Chart, table: table, extent: extent, withTip: withTip
+      });
+    }
+    if (window.CRFormulator) {
+      window.CRFormulator.render(D, {
         $: $, el: el, esc: esc, fmt: fmt, svgEl: svgEl,
         Chart: Chart, table: table, extent: extent, withTip: withTip
       });

@@ -127,17 +127,29 @@
   </section>
 
   <section class="panel" data-tab="equivalence" hidden>
-    <h2>Equivalence Sets</h2>
-    <p class="lede">Formulations whose measured profiles are similar by f2. This is where
-      formulation freedom lives — and where it runs out.</p>
+    <h2>Equivalence &amp; Substitution</h2>
+    <p class="lede">If a formulation has to change — a grade goes out of stock, a
+      drug load moves — what else gives the same release profile? This answers
+      that, and says plainly where no substitute exists.</p>
+
     <div id="eq-headline" class="callout"></div>
+
+    <h3>What can I substitute for this?</h3>
     <div class="controls">
-      <label>Target <select id="eq-target"></select></label>
+      <label>Formulation <select id="eq-target"></select></label>
+      <label><input type="checkbox" id="eq-cross-only"> only different grades</label>
     </div>
+    <div id="eq-guidance"></div>
     <div class="split">
       <div id="eq-chart" class="chart"></div>
       <div id="eq-table" class="tablewrap"></div>
     </div>
+
+    <h3>Where the freedom is</h3>
+    <p class="hint">Every measured formulation in composition space, sized by how
+      many substitutes it has. Small isolated points are formulations you cannot
+      reformulate around.</p>
+    <div id="eq-map" class="chart"></div>
   </section>
 
   <section class="panel" data-tab="stress" hidden>
@@ -169,24 +181,27 @@
       <div id="fw-out"></div>
     </div>
 
-    <h3>Inverse: find compositions for a target</h3>
-    <p class="hint">Ranked by a Derringer–Suich desirability across the key responses. The
-      weights are yours to set — they are not hidden inside the ranking.</p>
+    <h3>Inverse design — what should I make?</h3>
+    <p class="hint">Dose fixes the drug load, so that is what you set. The tool
+      searches HPMC grade and polymer content, with lactose as the balance to
+      100% — nothing to reconcile by hand.</p>
     <div class="controls">
-      <label>Target t50 (h) <input type="number" id="iv-t50" value="8" min="0.1" step="0.5"></label>
-      <label>Target % at 24 h <input type="number" id="iv-p24" value="90" min="1" max="100" step="1"></label>
-      <label>weight: t50 <input type="range" id="iv-w-t50" min="0" max="3" step="0.1" value="1"><span id="iv-w-t50-v">1.0</span></label>
-      <label>weight: 24 h release <input type="range" id="iv-w-p24" min="0" max="3" step="0.1" value="1"><span id="iv-w-p24-v">1.0</span></label>
+      <label>API load (wt%) <input type="number" id="iv-api" value="35" min="0" max="100" step="0.5"></label>
+      <label>± tolerance <input type="number" id="iv-api-tol" value="5" min="0" max="30" step="0.5"></label>
+      <label>Goal <select id="iv-goal"></select></label>
+      <span id="iv-prompts" style="display:contents"></span>
     </div>
-    <div id="iv-out"></div>
+    <div id="iv-weights"></div>
+    <div id="iv-results"></div>
+
+    <h3>Predicted profiles for the top candidates</h3>
+    <div id="iv-profiles" class="chart"></div>
+
     <h3>Sweet spot</h3>
-    <p class="hint">Composition region satisfying every constraint at the selected grade.
-      Shaded where all constraints hold simultaneously.</p>
-    <div class="controls">
-      <label>Grade <select id="iv-grade"></select></label>
-      <label>t50 tolerance (±h) <input type="number" id="iv-tol" value="2" min="0.1" step="0.5"></label>
-    </div>
-    <div id="iv-overlay" class="chart"></div>
+    <p class="hint">Where the goal is met, across the tested composition region.
+      Darker means better; blank is outside the design and nothing is proposed
+      there.</p>
+    <div id="iv-sweetspot" class="chart"></div>
   </section>
 
   <section class="panel" data-tab="diagnostics" hidden>
@@ -212,6 +227,7 @@
 <script src="data.js"></script>
 <script src="model.js"></script>
 <script src="doe.js"></script>
+<script src="formulator.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
