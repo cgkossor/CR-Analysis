@@ -83,7 +83,14 @@ def fit_weibull(time_h: np.ndarray, pct: np.ndarray) -> FitResult:
     half = peak / 2.0
     idx = int(np.argmax(y >= half)) if np.any(y >= half) else len(t) - 1
     td0 = max(float(t[idx]), 1e-3)
-    ceiling = config.MAX_PHYSICAL_RELEASE_PCT
+    # Data-aware ceiling. A flat cap would clamp a profile that genuinely reached
+    # 110% -- ordinary for a real assay near plateau -- biasing F_inf and Td down
+    # on exactly the formulations that released most fully. The bound still exists
+    # to stop a censored profile running its asymptote off to nothing physical.
+    ceiling = max(
+        config.MAX_PHYSICAL_RELEASE_PCT,
+        peak * config.ASYMPTOTE_CEILING_MARGIN,
+    )
     p0 = [min(max(peak, 1.0), ceiling), td0, 0.75]
     bounds = ([1.0, 1e-4, 0.05], [ceiling, 1e4, 10.0])
 
@@ -110,7 +117,7 @@ def fit_weibull(time_h: np.ndarray, pct: np.ndarray) -> FitResult:
         )
     if at_bound:
         notes.append(
-            f"F_inf pinned at the physical ceiling ({ceiling:g}%); the data do not "
+            f"F_inf pinned at its upper bound ({ceiling:.1f}%); the data do not "
             "constrain the asymptote from below it"
         )
 

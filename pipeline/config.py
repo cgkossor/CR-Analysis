@@ -48,12 +48,20 @@ PEPPAS_MIN_POINTS: Final[int] = 3
 #: G5 - a profile that never reaches this level has a censored t80.
 CENSORING_PCT: Final[float] = 80.0
 
-#: Physical ceiling on the Weibull asymptote. A formulation cannot release more
-#: than the dose it contains; the headroom above 100 absorbs assay overshoot near
-#: plateau. Without this bound, a heavily censored profile -- one that never
-#: approaches its own asymptote -- lets the optimiser run F_inf off to
-#: non-physical values and drag Td with it.
+#: Lower bound for the Weibull asymptote ceiling. The bound exists to stop a
+#: heavily censored profile -- one that never approaches its own plateau -- from
+#: letting the optimiser run F_inf off to non-physical values and drag Td with
+#: it. It is NOT a statement that release cannot exceed this number.
+#:
+#: The ceiling actually applied is data-aware: max(this, observed peak x margin).
+#: A flat 105 would clamp a profile that genuinely reached 110%, biasing both
+#: F_inf and Td downward on exactly the formulations that released most fully.
 MAX_PHYSICAL_RELEASE_PCT: Final[float] = 105.0
+
+#: How far above a profile's own observed peak its asymptote may be fitted.
+#: Applied when the peak exceeds MAX_PHYSICAL_RELEASE_PCT, so the fit follows
+#: the data instead of a constant.
+ASYMPTOTE_CEILING_MARGIN: Final[float] = 1.05
 
 #: A Weibull asymptote counts as identified only when the profile actually climbs
 #: to this fraction of the fitted F_inf. Below it, F_inf and Td are extrapolated
@@ -90,11 +98,31 @@ ADEQUATE_PRECISION_FLAG: Final[float] = 4.0
 TIME_CLUSTER_ABS_H: Final[float] = 0.5 / 60.0
 TIME_CLUSTER_REL: Final[float] = 0.01
 
-# --- Plotting ----------------------------------------------------------------
-#: Upper limit of the time axis on every plot, in hours. Fixed rather than
-#: data-driven so profiles stay comparable between runs and between databases,
-#: and so a 24 h endpoint is not pinned against the frame edge.
+# =============================================================================
+# PLOTTING -- AXIS LIMITS
+# =============================================================================
+# >>> EDIT AXIS LIMITS HERE. <<<
+#
+# These four constants set the axes on EVERY plot: the matplotlib figures in
+# outputs/figures/ and the interactive charts in the dashboard both read them,
+# so the two cannot drift apart. Change a value, re-run the pipeline, and every
+# figure and panel follows.
+#
+# They are fixed rather than derived from the data on purpose. Auto-scaled axes
+# silently rescale between runs, so two profiles that look equally steep are not
+# actually comparable -- and a formulation whose release collapsed would look
+# normal because the axis shrank to fit it.
+
+#: Time axis, hours. The upper limit sits past the 24 h endpoint so the final
+#: measurement is not pinned against the frame edge.
+PLOT_MIN_TIME_H: Final[float] = 0.0
 PLOT_MAX_TIME_H: Final[float] = 25.0
+
+#: Release axis, % of dose. The upper limit is deliberately above 100: real
+#: assays overshoot near plateau, values of 105-110% are ordinary, and clipping
+#: the axis at 100 would hide them rather than showing what was measured.
+PLOT_MIN_RELEASE_PCT: Final[float] = 0.0
+PLOT_MAX_RELEASE_PCT: Final[float] = 115.0
 
 # --- Determinism (G10) ------------------------------------------------------
 #: Seed for every resample, CV split and optimiser start in this pipeline.

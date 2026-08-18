@@ -21,6 +21,7 @@ import pandas as pd
 
 from pipeline import config
 from pipeline.analysis import Analysis
+from pipeline.profiles.grid import project_onto_grid
 from pipeline.stress.subsets import StressTest
 
 #: Decimal places used for every exported float. Fixed so that two runs cannot
@@ -57,6 +58,41 @@ def _frame(frame: pd.DataFrame, columns: list[str] | None = None) -> list[dict[s
     return [_clean(record) for record in subset.to_dict(orient="records")]
 
 
+def _replicate_sd(a: Analysis, case: int, grade: str) -> np.ndarray:
+    """Replicate standard deviation at each canonical grid point.
+
+    This is WITHIN-BATCH analytical repeatability -- vessels from one compression
+    batch. It is a much smaller quantity than the cross-validated prediction
+    error and must never be presented in its place; see the guidelines.
+    """
+    subset = a.db.profiles[
+        (a.db.profiles["case"] == case) & (a.db.profiles["grade"] == grade)
+    ]
+    stacked = []
+    for _, group in subset.groupby("replicate"):
+        ordered = group.sort_values("time_h")
+        stacked.append(
+            project_onto_grid(
+                ordered["time_h"].to_numpy(dtype=float),
+                ordered["pct_released"].to_numpy(dtype=float),
+                a.time_grid,
+            )
+        )
+    if len(stacked) < 2:
+        return np.full(len(a.time_grid), np.nan)
+    matrix = np.vstack(stacked)
+    # A grid point outside some replicates' measured window has fewer than two
+    # values there, and a sample SD of one point is undefined rather than zero.
+    # Compute only where it is defined; elsewhere the band is simply absent.
+    counts = np.sum(np.isfinite(matrix), axis=0)
+    out = np.full(matrix.shape[1], np.nan)
+    usable = counts >= 2
+    if np.any(usable):
+        with np.errstate(invalid="ignore"):
+            out[usable] = np.nanstd(matrix[:, usable], axis=0, ddof=1)
+    return out
+
+
 def build_payload(analysis: Analysis, stress: StressTest | None = None) -> dict[str, Any]:
     """Assemble the dashboard payload."""
     a = analysis
@@ -73,9 +109,16 @@ def build_payload(analysis: Analysis, stress: StressTest | None = None) -> dict[
         ]
         for rep, group in subset.groupby("replicate"):
             ordered = group.sort_values("time_h")
+            # Each replicate carries ITS OWN measured times. Exporting values
+            # alone forced the dashboard to index them against the canonical
+            # grid positionally, so once the two lengths diverged -- which is
+            # exactly what reconciling ragged sampling times causes -- the curve
+            # was drawn across the wrong x values and compressed into the first
+            # few hours. x and y travel together now.
             replicate_curves.append(
                 {
                     "replicate": int(rep),
+                    "times_h": _clean(ordered["time_h"].to_numpy()),
                     "pct": _clean(ordered["pct_released"].to_numpy()),
                 }
             )
@@ -89,6 +132,7 @@ def build_payload(analysis: Analysis, stress: StressTest | None = None) -> dict[
                 "lactose_wt": _clean(row["lactose_wt"].iloc[0]) if len(row) else None,
                 "viscosity_cp": _clean(row["viscosity_cp"].iloc[0]) if len(row) else None,
                 "mean_pct": _clean(curve),
+                "sd_pct": _clean(_replicate_sd(a, int(case), str(grade))),
                 "replicates": replicate_curves,
                 "censoring": str(row["censoring_status"].iloc[0]) if len(row) else "",
                 "log10_td": _clean(row["log10_td_mean"].iloc[0]) if len(row) else None,
@@ -296,7 +340,10 @@ def build_payload(analysis: Analysis, stress: StressTest | None = None) -> dict[
             "f2_threshold": config.F2_SIMILAR_THRESHOLD,
             "censoring_pct": config.CENSORING_PCT,
             "model": a.model_spec.label,
+            "plot_min_time_h": _clean(config.PLOT_MIN_TIME_H),
             "plot_max_time_h": _clean(config.PLOT_MAX_TIME_H),
+            "plot_min_release_pct": _clean(config.PLOT_MIN_RELEASE_PCT),
+            "plot_max_release_pct": _clean(config.PLOT_MAX_RELEASE_PCT),
         },
         "quality": {
             "apis": list(quality.apis),

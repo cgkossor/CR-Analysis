@@ -97,6 +97,18 @@
   };
   Chart.prototype.line = function (xs, ys, colour, opts) {
     opts = opts || {};
+    /* Silent truncation here is what let the replicate x-axis bug survive: a
+     * series was drawn across only the first ys.length grid slots and looked
+     * like a real, if oddly compressed, curve. Two arrays that disagree on
+     * length are never a drawable series, so say so instead of guessing. */
+    if (xs.length !== ys.length) {
+      console.error(
+        "Chart.line: x has " + xs.length + " points but y has " + ys.length +
+        (opts.title ? " (" + opts.title + ")" : "") +
+        " — refusing to draw a positionally mis-aligned series"
+      );
+      return this;
+    }
     var d = "", i, started = false;
     for (i = 0; i < xs.length; i++) {
       if (ys[i] === null || ys[i] === undefined || !isFinite(ys[i])) continue;
@@ -324,12 +336,17 @@
     });
 
     var ch = new Chart(560, 340);
-    ch.scales([0, D.meta.plot_max_time_h], [0, 105]).axes("time (h)", "% released");
+    ch.scales([D.meta.plot_min_time_h, D.meta.plot_max_time_h], [D.meta.plot_min_release_pct, D.meta.plot_max_release_pct]).axes("time (h)", "% released");
     ch.hline(D.meta.censoring_pct, "#b4541f", "5 4");
     rows.forEach(function (p, i) {
       if (showReps) {
         p.replicates.forEach(function (r) {
-          ch.line(D.grid_h, r.pct, colourFor(p.grade, i), { width: 0.8, opacity: 0.45 });
+          /* r.times_h, not D.grid_h: a replicate is measured on its own
+           * schedule and only lands on the canonical grid after interpolation. */
+          ch.line(r.times_h || D.grid_h, r.pct, colourFor(p.grade, i), {
+            width: 0.8, opacity: 0.45,
+            title: "case " + p.case + " / " + p.grade + " rep " + r.replicate
+          });
         });
       }
       ch.line(D.grid_h, p.mean_pct, colourFor(p.grade, i), {
@@ -587,7 +604,7 @@
     if (!set) return;
 
     var ch = new Chart(560, 340);
-    ch.scales([0, D.meta.plot_max_time_h], [0, 105]).axes("time (h)", "% released");
+    ch.scales([D.meta.plot_min_time_h, D.meta.plot_max_time_h], [D.meta.plot_min_release_pct, D.meta.plot_max_release_pct]).axes("time (h)", "% released");
     set.members.slice(0, 8).forEach(function (m, i) {
       var p = profileFor(m.case, m.grade);
       if (!p) return;
@@ -680,7 +697,7 @@
     var hull = inHull(api, hpmc);
     var inVisc = true;
     var times = [];
-    for (var t = 0; t <= D.meta.plot_max_time_h; t += 0.25) times.push(t);
+    for (var t = D.meta.plot_min_time_h; t <= D.meta.plot_max_time_h; t += 0.25) times.push(t);
     var pred = predictProfile(api, hpmc, lac, lv, times);
 
     if (!hull) {
@@ -694,7 +711,7 @@
     }
 
     var ch = new Chart(540, 330);
-    ch.scales([0, D.meta.plot_max_time_h], [0, 105]).axes("time (h)", "% released");
+    ch.scales([D.meta.plot_min_time_h, D.meta.plot_max_time_h], [D.meta.plot_min_release_pct, D.meta.plot_max_release_pct]).axes("time (h)", "% released");
     ch.hline(D.meta.censoring_pct, "#b4541f", "5 4");
     /* Nearest measured neighbours, always shown (G3, G6 traceability). */
     var neigh = nearest(api, hpmc, lv, 3);

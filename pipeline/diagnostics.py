@@ -159,8 +159,39 @@ def collect(analysis: Analysis, stress: StressTest | None = None) -> Diagnostics
         "observations above 100%",
         "INFO",
         q.values_above_100,
-        f"max {q.max_pct_released:.2f}% — assay noise, preserved not clipped",
+        f"max {q.max_pct_released:.2f}% — preserved as measured, never clipped",
     )
+
+    # A consistent plateau above 100% is usually not assay scatter. Scatter is
+    # symmetric about the true value; a systematic offset means the denominator
+    # is wrong -- actual tablet content exceeding mass x label API%. This
+    # quantifies it and says so. It changes no calculation.
+    plateaus = [
+        float(np.nanmax(curve))
+        for curve in analysis.observed_profiles.values()
+        if np.any(np.isfinite(curve))
+    ]
+    complete = [p for p in plateaus if p >= config.COMPLETE_RELEASE_PCT]
+    if complete:
+        median_plateau = float(np.median(complete))
+        offset = median_plateau - 100.0
+        systematic = offset > 2.0
+        d.add(
+            "Data quality",
+            "median plateau of completed profiles (%)",
+            "WARN" if systematic else "PASS",
+            median_plateau,
+            (
+                f"a systematic +{offset:.1f}% offset across {len(complete)} profiles. "
+                "Random assay scatter is symmetric about the true value, so a "
+                "one-sided offset of this size more often means the dose denominator "
+                "is understated — actual tablet content above mass x label API% — "
+                "than that the assay is noisy. Worth checking content uniformity or "
+                "the assumed API fraction. Nothing has been rescaled."
+            )
+            if systematic
+            else f"offset {offset:+.1f}% — consistent with ordinary assay scatter",
+        )
     d.add("Data quality", "negative observations", "PASS" if not q.negative_values else "WARN",
           q.negative_values)
     d.add(
