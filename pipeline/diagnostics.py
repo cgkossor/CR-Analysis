@@ -171,9 +171,9 @@ def collect(analysis: Analysis, stress: StressTest | None = None) -> Diagnostics
         for curve in analysis.observed_profiles.values()
         if np.any(np.isfinite(curve))
     ]
-    complete = [p for p in plateaus if p >= config.COMPLETE_RELEASE_PCT]
-    if complete:
-        median_plateau = float(np.median(complete))
+    completed = [p for p in plateaus if p >= config.COMPLETE_RELEASE_PCT]
+    if completed:
+        median_plateau = float(np.median(completed))
         offset = median_plateau - 100.0
         systematic = offset > 2.0
         d.add(
@@ -182,7 +182,7 @@ def collect(analysis: Analysis, stress: StressTest | None = None) -> Diagnostics
             "WARN" if systematic else "PASS",
             median_plateau,
             (
-                f"a systematic +{offset:.1f}% offset across {len(complete)} profiles. "
+                f"a systematic +{offset:.1f}% offset across {len(completed)} profiles. "
                 "Random assay scatter is symmetric about the true value, so a "
                 "one-sided offset of this size more often means the dose denominator "
                 "is understated — actual tablet content above mass x label API% — "

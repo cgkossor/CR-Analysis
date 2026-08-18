@@ -58,6 +58,7 @@ process.stdout.write(JSON.stringify({
   cvBadge: (d.getElementById("cv-badge").textContent || "").replace(/\s+/g, " ").trim(),
   g1Gate: d.body.innerHTML.indexOf("Insufficient data") >= 0,
   rows: d.querySelectorAll("tbody tr").length,
+  tooltips: d.querySelectorAll("abbr.tip").length,
   errors,
 }));
 """
@@ -69,6 +70,7 @@ EXPECTED_TABS = {
     "surfaces",
     "equivalence",
     "stress",
+    "diagnostics",
     "formulator",
     "guidelines",
 }
@@ -138,6 +140,21 @@ def test_cross_validated_error_is_always_visible(rendered: dict) -> None:
     """G6: no prediction is displayed without its error estimate."""
     assert "%" in rendered["cvBadge"], f"CV badge missing: {rendered['cvBadge']!r}"
     assert "LOFO" in rendered["cvBadge"]
+
+
+def test_diagnostics_tab_surfaces_the_verdict(rendered: dict) -> None:
+    """The run's health has to be visible in the tool, not only in a file."""
+    assert rendered["tabs"]["diagnostics"]["chars"] > 1000, (
+        "Diagnostics tab rendered almost nothing"
+    )
+
+
+def test_statistics_carry_definitions(rendered: dict) -> None:
+    """A number a reader cannot interpret is not evidence (issues 8 and 10)."""
+    assert rendered["tooltips"] > 10, (
+        f"only {rendered['tooltips']} tooltips on the page; statistics should "
+        "carry their definitions"
+    )
 
 
 def test_solubility_claims_are_gated_with_one_api(rendered: dict) -> None:

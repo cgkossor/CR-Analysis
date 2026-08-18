@@ -20,6 +20,7 @@ from pipeline.design.report import render_markdown as design_markdown
 from pipeline.diagnostics import render_console as diag_console
 from pipeline.diagnostics import write as write_diagnostics
 from pipeline.export.data_js import build_payload, write_data_js
+from pipeline.glossary import render_parameters_md
 from pipeline.io.load import load_database
 from pipeline.io.quality import render_markdown as quality_markdown
 from pipeline.io.schema import SchemaError
@@ -101,6 +102,9 @@ def _write_reports(analysis: Analysis, stress: StressTest, reports: Path) -> Non
 
     docs = Path("docs")
     docs.mkdir(exist_ok=True)
+    (docs / "parameters.md").write_text(
+        render_parameters_md(), encoding="utf-8", newline="\n"
+    )
     (docs / "guidelines.md").write_text(
         render_guidelines(analysis, stress), encoding="utf-8", newline="\n"
     )
@@ -139,8 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     diagnostics = write_diagnostics(analysis, stress, reports)
     print(f"Diagnostics -> {reports / 'diagnostics.md'} (+ .json)")
 
-
-    payload = build_payload(analysis, stress)
+    payload = build_payload(analysis, stress, diagnostics)
     data_path = write_data_js(payload, Path(args.dashboard) / "data.js")
     print(f"Dashboard data -> {data_path}")
 
@@ -155,9 +158,15 @@ def main(argv: list[str] | None = None) -> int:
         # Re-run the whole chain from the raw file: a second pass must reproduce
         # data.js byte for byte, not merely re-serialise the same objects.
         repeat = run_analysis(load_database(args.input))
+        repeat_stress = _stress(repeat)
         with tempfile.TemporaryDirectory() as tmp:
+            # Recompute the diagnostics as well. Reusing the first run's would
+            # exempt them from the check, which is precisely the part most likely
+            # to pick up a stray timestamp or dict ordering.
+            repeat_diag = write_diagnostics(repeat, repeat_stress, Path(tmp))
             again = write_data_js(
-                build_payload(repeat, _stress(repeat)), Path(tmp) / "data.js"
+                build_payload(repeat, repeat_stress, repeat_diag),
+                Path(tmp) / "data.js",
             )
             second = hashlib.sha256(again.read_bytes()).hexdigest()
         if first != second:

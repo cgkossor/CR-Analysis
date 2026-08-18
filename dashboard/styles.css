@@ -115,3 +115,29 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .markdown li { margin-bottom: 5px; }
 .markdown p { max-width: 82ch; }
 .markdown strong { color: var(--ink); }
+
+/* --- Tooltips ------------------------------------------------------------ */
+/* A definition attached to the number itself, so meaning travels with the
+   value instead of living in a document nobody opens. */
+abbr.tip {
+  text-decoration: underline dotted var(--muted);
+  text-underline-offset: 3px;
+  cursor: help;
+  border: 0;
+}
+abbr.tip:hover { color: var(--accent); text-decoration-color: var(--accent); }
+
+/* --- Diagnostics --------------------------------------------------------- */
+#dg-problems ul { margin: 6px 0 16px; padding-left: 18px; }
+#dg-problems li { margin-bottom: 7px; }
+#dg-all details {
+  border: 1px solid var(--line); border-radius: 8px;
+  margin-bottom: 8px; background: #fbfcfe;
+}
+#dg-all summary {
+  cursor: pointer; padding: 9px 13px; font-weight: 600; font-size: 13px;
+  list-style-position: inside;
+}
+#dg-all summary:hover { color: var(--accent); }
+#dg-all details[open] summary { border-bottom: 1px solid var(--line); }
+#dg-all .tablewrap { border: 0; border-radius: 0; max-height: 340px; }

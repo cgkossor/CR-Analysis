@@ -357,7 +357,9 @@
     var t = el("table");
     var thead = el("thead"), tr = el("tr");
     columns.forEach(function (c) {
-      tr.appendChild(el("th", c.num ? { class: "num" } : null, c.label));
+      var th = el("th", c.num ? { class: "num" } : null);
+      th.innerHTML = withTip(c.label);
+      tr.appendChild(th);
     });
     thead.appendChild(tr); t.appendChild(thead);
     var tb = el("tbody");
@@ -390,6 +392,7 @@
     ["surfaces", "Response Surfaces"],
     ["equivalence", "Equivalence Sets"],
     ["stress", "Design Stress Test"],
+    ["diagnostics", "Diagnostics"],
     ["formulator", "Formulator Tool"],
     ["guidelines", "Guidelines & Limitations"]
   ];
@@ -534,7 +537,9 @@
     var wrap = $("metrics-quality"); wrap.innerHTML = "";
     cards.forEach(function (c) {
       var d = el("div", { class: "card" });
-      d.appendChild(el("small", null, c[0]));
+      var lab = el("small");
+      lab.innerHTML = withTip(c[0]);
+      d.appendChild(lab);
       d.appendChild(el("b", null, c[1]));
       wrap.appendChild(d);
     });
@@ -645,7 +650,9 @@
     var wrap = $("sf-summary"); wrap.innerHTML = "";
     cards.forEach(function (c) {
       var d = el("div", { class: "card" });
-      d.appendChild(el("small", null, c[0]));
+      var lab = el("small");
+      lab.innerHTML = withTip(c[0]);
+      d.appendChild(lab);
       d.appendChild(el("b", null, c[1]));
       wrap.appendChild(d);
     });
@@ -1117,6 +1124,104 @@
       "</ul>";
   }
 
+
+  /* -------------------------------------------------- diagnostics tab */
+  function renderDiagnostics() {
+    var dg = D.diagnostics;
+    if (!dg) { $("dg-verdict").textContent = "Diagnostics not available."; return; }
+
+    var failed = dg.checks.filter(function (c) { return c.status === "FAIL"; });
+    var warned = dg.checks.filter(function (c) { return c.status === "WARN"; });
+    var v = $("dg-verdict");
+    v.className = "callout " + (failed.length ? "danger" : warned.length ? "warn" : "ok");
+    v.innerHTML = "<b>" + esc(dg.verdict) + "</b>";
+
+    var problems = $("dg-problems");
+    problems.innerHTML = "";
+    if (failed.length || warned.length) {
+      var h = el("h3", null, failed.length ? "Needs attention" : "Caveats");
+      problems.appendChild(h);
+      var list = el("ul");
+      failed.concat(warned).forEach(function (c) {
+        var li = el("li");
+        li.innerHTML = '<span class="pill ' + (c.status === "FAIL" ? "flag" : "partial") +
+          '">' + c.status + "</span> <b>" + esc(c.section) + " / " + esc(c.name) +
+          "</b> = <code>" + esc(c.value) + "</code>" +
+          (c.note ? " — " + esc(c.note) : "");
+        list.appendChild(li);
+      });
+      problems.appendChild(list);
+    }
+
+    var all = $("dg-all");
+    all.innerHTML = "";
+    all.appendChild(el("h3", null, "All checks"));
+    var sections = [];
+    dg.checks.forEach(function (c) {
+      if (sections.indexOf(c.section) < 0) sections.push(c.section);
+    });
+    sections.forEach(function (name) {
+      var det = el("details");
+      var sum = el("summary", null, name);
+      det.appendChild(sum);
+      var wrap = el("div", { class: "tablewrap" });
+      wrap.appendChild(table([
+        { key: "name", label: "check" },
+        { key: "value", label: "value", num: true },
+        { key: "status", label: "status", html: true },
+        { key: "note", label: "note" }
+      ], dg.checks.filter(function (c) { return c.section === name; }).map(function (c) {
+        return {
+          name: withTip(c.name), value: c.value,
+          status: c.status === "INFO" ? "" :
+            '<span class="pill ' + (c.status === "FAIL" ? "flag" :
+              c.status === "WARN" ? "partial" : "none") + '">' + c.status + "</span>",
+          note: c.note
+        };
+      })));
+      det.appendChild(wrap);
+      all.appendChild(det);
+    });
+  }
+
+  /* ------------------------------------------------------- tooltips */
+  /* A number a reader cannot interpret is not evidence. Every statistic the
+   * glossary knows about gets its definition on hover, so the meaning travels
+   * with the value instead of living in a document nobody opens. */
+  var GLOSSARY = D && D.glossary ? D.glossary : {};
+  var TIP_ALIASES = {
+    "R2": "r2", "adjusted R2": "adj_r2", "predicted R2 (PRESS)": "pred_r2",
+    "adequate precision": "adequate_precision", "p": "p_value",
+    "profile RMSE (% released)": "cv_rmse", "cross-validated error computable": "cv_rmse",
+    "median f2 predicted vs observed": "f2", "f2": "f2",
+    "max leverage": "leverage", "leverage": "leverage",
+    "D-criterion": "d_criterion", "G-eff %": "g_efficiency",
+    "Td (h)": "weibull_td", "β": "weibull_beta", "F∞ %": "weibull_f_inf",
+    "t50 (h)": "t50", "MDT (h)": "mdt", "censoring": "censored",
+    "SD log₁₀Td (replicate)": "replicate_sd",
+    "lack-of-fit estimable": "lack_of_fit", "desirability": "desirability"
+  };
+
+  function tipFor(label) {
+    var key = TIP_ALIASES[label] || label;
+    var entry = GLOSSARY[key];
+    if (!entry) {
+      var lower = String(label).toLowerCase();
+      Object.keys(GLOSSARY).forEach(function (k) {
+        if (!entry && GLOSSARY[k].label && GLOSSARY[k].label.toLowerCase() === lower) {
+          entry = GLOSSARY[k];
+        }
+      });
+    }
+    return entry ? entry.tooltip : null;
+  }
+
+  function withTip(label) {
+    var tip = tipFor(label);
+    if (!tip) return esc(label);
+    return '<abbr class="tip" title="' + esc(tip) + '">' + esc(label) + "</abbr>";
+  }
+
   /* ----------------------------------------------------------- boot */
   function boot() {
     if (!D) {
@@ -1196,6 +1301,7 @@
     renderForward();
     renderInverse();
     renderGuidelines();
+    renderDiagnostics();
     showTab("explorer");
   }
 

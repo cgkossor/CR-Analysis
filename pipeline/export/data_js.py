@@ -21,6 +21,8 @@ import pandas as pd
 
 from pipeline import config
 from pipeline.analysis import Analysis
+from pipeline.diagnostics import Diagnostics
+from pipeline.glossary import as_dict as glossary_dict
 from pipeline.profiles.grid import project_onto_grid
 from pipeline.stress.subsets import StressTest
 
@@ -93,7 +95,11 @@ def _replicate_sd(a: Analysis, case: int, grade: str) -> np.ndarray:
     return out
 
 
-def build_payload(analysis: Analysis, stress: StressTest | None = None) -> dict[str, Any]:
+def build_payload(
+    analysis: Analysis,
+    stress: StressTest | None = None,
+    diagnostics: Diagnostics | None = None,
+) -> dict[str, Any]:
     """Assemble the dashboard payload."""
     a = analysis
     quality = a.quality
@@ -330,6 +336,7 @@ def build_payload(analysis: Analysis, stress: StressTest | None = None) -> dict[
     }
 
     payload: dict[str, Any] = {
+        "glossary": glossary_dict(),
         "meta": {
             "source_file": quality.source_name,
             "is_synthetic": quality.is_synthetic,
@@ -427,6 +434,21 @@ def build_payload(analysis: Analysis, stress: StressTest | None = None) -> dict[
         "equivalence": equivalence,
         "levers": _frame(a.lever_effects),
     }
+
+    if diagnostics is not None:
+        payload["diagnostics"] = {
+            "verdict": diagnostics.verdict,
+            "checks": [
+                {
+                    "section": c.section,
+                    "name": c.name,
+                    "status": c.status,
+                    "value": c.display,
+                    "note": c.note,
+                }
+                for c in diagnostics.checks
+            ],
+        }
 
     if stress is not None:
         payload["stress"] = {
