@@ -124,6 +124,7 @@
     if (opts.opacity) path.setAttribute("opacity", opts.opacity);
     if (opts.title) { var tt = svgEl("title", {}); tt.textContent = opts.title; path.appendChild(tt); }
     this.svg.appendChild(path);
+    this.lastPath = path;
     return this;
   };
   Chart.prototype.dots = function (xs, ys, colour, r, titles) {
@@ -138,6 +139,26 @@
     }
     return this;
   };
+  /* Shaded band between two y-series. Used for replicate spread, which is
+   * WITHIN-BATCH analytical repeatability -- vessels from one compression batch.
+   * It is a much smaller quantity than the cross-validated prediction error and
+   * is labelled so that the two can never be read as interchangeable. */
+  Chart.prototype.band = function (xs, lo, hi, colour, opacity) {
+    if (xs.length !== lo.length || xs.length !== hi.length) return this;
+    var fwd = [], back = [], i;
+    for (i = 0; i < xs.length; i++) {
+      if (!isFinite(lo[i]) || !isFinite(hi[i])) continue;
+      fwd.push(this.px(xs[i]).toFixed(2) + " " + this.py(hi[i]).toFixed(2));
+      back.unshift(this.px(xs[i]).toFixed(2) + " " + this.py(lo[i]).toFixed(2));
+    }
+    if (fwd.length < 2) return this;
+    this.svg.appendChild(svgEl("path", {
+      d: "M" + fwd.join("L") + "L" + back.join("L") + "Z",
+      fill: colour, opacity: opacity === undefined ? 0.16 : opacity, stroke: "none"
+    }));
+    return this;
+  };
+
   Chart.prototype.hline = function (y, colour, dash) {
     this.svg.appendChild(svgEl("line", {
       x1: this.pad.l, x2: this.w - this.pad.r, y1: this.py(y), y2: this.py(y),
@@ -160,6 +181,88 @@
     }));
     return this;
   };
+  /* Hover identifies a curve and reads off its value at the cursor; click pins
+   * it so two curves can be compared without keeping a colour in your head.
+   * Without this, thirty overlaid profiles are a texture rather than data. */
+  Chart.prototype.interactive = function (series) {
+    this.series = series || [];
+    var self = this;
+    var overlay = svgEl("rect", {
+      x: this.pad.l, y: this.pad.t,
+      width: Math.max(this.w - this.pad.l - this.pad.r, 0),
+      height: Math.max(this.h - this.pad.t - this.pad.b, 0),
+      fill: "transparent", "pointer-events": "all"
+    });
+    var marker = svgEl("circle", { r: 4, fill: "#1c2330", stroke: "#fff",
+      "stroke-width": 1.4, opacity: 0, "pointer-events": "none" });
+    var label = svgEl("text", { "font-size": 11, fill: "#1c2330", opacity: 0,
+      "pointer-events": "none", "paint-order": "stroke", stroke: "#fff",
+      "stroke-width": 3.5, "stroke-linejoin": "round" });
+
+    function nearest(evt) {
+      /* Map client pixels into the SVG's own viewBox units. A zero-width box
+       * happens in a collapsed container and in headless DOMs; falling back to
+       * 1:1 keeps the maths finite instead of dividing by zero. */
+      var box = self.svg.getBoundingClientRect();
+      var sx = box && box.width ? self.w / box.width : 1;
+      var sy = box && box.height ? self.h / box.height : 1;
+      var mx = (evt.clientX - (box ? box.left : 0)) * sx;
+      var my = (evt.clientY - (box ? box.top : 0)) * sy;
+      var best = null, bestDist = Infinity;
+      self.series.forEach(function (ser) {
+        for (var i = 0; i < ser.xs.length; i++) {
+          if (!isFinite(ser.ys[i])) continue;
+          var dx = self.px(ser.xs[i]) - mx, dy = self.py(ser.ys[i]) - my;
+          var dist = dx * dx + dy * dy;
+          if (dist < bestDist) { bestDist = dist; best = { ser: ser, i: i }; }
+        }
+      });
+      return bestDist < 900 ? best : null;
+    }
+
+    function highlight(hit) {
+      self.series.forEach(function (ser) {
+        if (!ser.path) return;
+        var on = !hit || ser === hit.ser || ser === self.pinned;
+        ser.path.setAttribute("opacity", on ? (ser.baseOpacity || 1) : 0.12);
+        ser.path.setAttribute("stroke-width",
+          (hit && ser === hit.ser) ? (ser.baseWidth || 1.7) + 1.2 : (ser.baseWidth || 1.7));
+      });
+      if (hit) {
+        marker.setAttribute("cx", self.px(hit.ser.xs[hit.i]).toFixed(2));
+        marker.setAttribute("cy", self.py(hit.ser.ys[hit.i]).toFixed(2));
+        marker.setAttribute("fill", hit.ser.colour || "#1c2330");
+        marker.setAttribute("opacity", 1);
+        label.textContent = hit.ser.label + " · " +
+          trimNum(hit.ser.xs[hit.i]) + " h · " + hit.ser.ys[hit.i].toFixed(1) + "%";
+        var lx = Math.min(self.px(hit.ser.xs[hit.i]) + 9, self.w - self.pad.r - 4);
+        label.setAttribute("x", lx.toFixed(2));
+        label.setAttribute("y", (self.py(hit.ser.ys[hit.i]) - 9).toFixed(2));
+        label.setAttribute("text-anchor", lx > self.w * 0.72 ? "end" : "start");
+        label.setAttribute("opacity", 1);
+      } else {
+        marker.setAttribute("opacity", 0);
+        label.setAttribute("opacity", 0);
+      }
+    }
+
+    overlay.addEventListener("mousemove", function (e) { highlight(nearest(e)); });
+    overlay.addEventListener("mouseleave", function () {
+      highlight(self.pinned ? { ser: self.pinned, i: 0 } : null);
+      if (!self.pinned) highlight(null);
+    });
+    overlay.addEventListener("click", function (e) {
+      var hit = nearest(e);
+      self.pinned = (hit && self.pinned === hit.ser) ? null : (hit ? hit.ser : null);
+      highlight(hit);
+    });
+
+    this.svg.appendChild(overlay);
+    this.svg.appendChild(marker);
+    this.svg.appendChild(label);
+    return this;
+  };
+
   Chart.prototype.mount = function (node) {
     node.innerHTML = "";
     node.appendChild(this.svg);
@@ -331,29 +434,65 @@
     var grade = $("ex-grade").value;
     var cens = $("ex-censoring").value;
     var showReps = $("ex-replicates").checked;
+    var showBand = $("ex-band").checked;
     var rows = D.profiles.filter(function (p) {
       return (!grade || p.grade === grade) && (!cens || p.censoring === cens);
     });
 
     var ch = new Chart(560, 340);
-    ch.scales([D.meta.plot_min_time_h, D.meta.plot_max_time_h], [D.meta.plot_min_release_pct, D.meta.plot_max_release_pct]).axes("time (h)", "% released");
+    ch.scales([D.meta.plot_min_time_h, D.meta.plot_max_time_h],
+              [D.meta.plot_min_release_pct, D.meta.plot_max_release_pct])
+      .axes("time (h)", "% released");
     ch.hline(D.meta.censoring_pct, "#b4541f", "5 4");
+    ch.hline(100, "#c8ced8", "2 3");
+
+    var series = [];
     rows.forEach(function (p, i) {
+      var colour = colourFor(p.grade, i);
+
+      if (showBand && p.sd_pct) {
+        var lo = [], hi = [];
+        for (var k = 0; k < D.grid_h.length; k++) {
+          var m = p.mean_pct[k], sd = p.sd_pct[k];
+          var ok = m !== null && sd !== null && isFinite(m) && isFinite(sd);
+          lo.push(ok ? m - sd : NaN);
+          hi.push(ok ? m + sd : NaN);
+        }
+        ch.band(D.grid_h, lo, hi, colour, 0.14);
+      }
+
       if (showReps) {
         p.replicates.forEach(function (r) {
           /* r.times_h, not D.grid_h: a replicate is measured on its own
            * schedule and only lands on the canonical grid after interpolation. */
-          ch.line(r.times_h || D.grid_h, r.pct, colourFor(p.grade, i), {
-            width: 0.8, opacity: 0.45,
-            title: "case " + p.case + " / " + p.grade + " rep " + r.replicate
+          var xs = r.times_h || D.grid_h;
+          ch.line(xs, r.pct, colour, { width: 0.8, opacity: 0.45 });
+          series.push({
+            xs: xs, ys: r.pct, colour: colour, path: ch.lastPath,
+            baseWidth: 0.8, baseOpacity: 0.45,
+            label: "case " + p.case + " / " + p.grade + " rep " + r.replicate
           });
         });
       }
-      ch.line(D.grid_h, p.mean_pct, colourFor(p.grade, i), {
-        width: 1.6, title: "case " + p.case + " / " + p.grade
+
+      ch.line(D.grid_h, p.mean_pct, colour, { width: 1.6 });
+      series.push({
+        xs: D.grid_h, ys: p.mean_pct, colour: colour, path: ch.lastPath,
+        baseWidth: 1.6, baseOpacity: 1,
+        label: "case " + p.case + " / " + p.grade + (showReps ? " (mean)" : "")
       });
     });
-    ch.mount($("ex-chart"));
+
+    ch.interactive(series).mount($("ex-chart"));
+
+    var legend = el("div", { class: "legend" });
+    legend.innerHTML =
+      "<span>Hover a curve to identify it and read its value; click to pin.</span>" +
+      (showBand
+        ? '<span><i style="background:#7a8494;opacity:.35"></i>shaded band = ±1 SD ' +
+          "across replicates (within-batch repeatability, <b>not</b> prediction error)</span>"
+        : "");
+    $("ex-chart").appendChild(legend);
 
     var data = rows.map(function (p) {
       return {
@@ -1031,7 +1170,7 @@
         "case " + e.case + " / " + e.grade + " (" + e.members.length + " members)"));
     });
 
-    ["ex-grade", "ex-censoring", "ex-replicates"].forEach(function (id) {
+    ["ex-grade", "ex-censoring", "ex-replicates", "ex-band"].forEach(function (id) {
       $(id).addEventListener("change", renderExplorer);
     });
     $("sf-response").addEventListener("change", renderSurfaces);

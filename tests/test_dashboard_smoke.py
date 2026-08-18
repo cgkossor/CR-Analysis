@@ -149,3 +149,77 @@ def test_solubility_claims_are_gated_with_one_api(rendered: dict) -> None:
         assert rendered["g1Gate"], (
             "only one API is loaded but no data-sufficiency gate was rendered"
         )
+
+
+_INTERACTION = r"""
+const { JSDOM, VirtualConsole } = require("jsdom");
+const fs = require("fs"), path = require("path");
+const dash = process.argv[1];
+const errors = [];
+const vc = new VirtualConsole();
+vc.on("jsdomError", e => errors.push("jsdomError: " + e.message));
+vc.on("error", (...a) => errors.push("console.error: " + a.join(" ")));
+const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
+  { runScripts: "dangerously", virtualConsole: vc });
+const w = dom.window;
+for (const f of ["data.js", "model.js", "app.js"]) {
+  w.eval(fs.readFileSync(path.join(dash, f), "utf8"));
+}
+w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
+const d = w.document;
+const chart = d.querySelector("#ex-chart svg");
+const overlay = chart.querySelector('rect[pointer-events="all"]');
+overlay.dispatchEvent(new w.MouseEvent("mousemove", { clientX: 200, clientY: 120, bubbles: true }));
+const labels = Array.from(chart.querySelectorAll("text"))
+  .filter(t => t.getAttribute("opacity") === "1");
+const marker = chart.querySelector('circle[opacity="1"]');
+overlay.dispatchEvent(new w.MouseEvent("click", { clientX: 200, clientY: 120, bubbles: true }));
+const dimmed = Array.from(chart.querySelectorAll("path"))
+  .filter(p => p.getAttribute("opacity") === "0.12").length;
+process.stdout.write(JSON.stringify({
+  overlay: !!overlay,
+  bands: chart.querySelectorAll('path[stroke="none"]').length,
+  label: labels.length ? labels[labels.length - 1].textContent : null,
+  marker: !!marker,
+  dimmedAfterClick: dimmed,
+  errors,
+}));
+"""
+
+
+@pytest.fixture(scope="module")
+def interaction() -> dict:
+    if NODE is None:
+        pytest.skip("node is not installed")
+    if not (DASHBOARD / "data.js").exists():
+        pytest.skip("dashboard/data.js not generated")
+    if not _have_jsdom():
+        pytest.skip("jsdom not installed (npm install jsdom)")
+    result = subprocess.run(
+        [NODE, "-e", _INTERACTION, str(DASHBOARD)],
+        capture_output=True, text=True, timeout=300, check=False, cwd=ROOT,
+    )
+    assert result.returncode == 0, f"interaction harness failed: {result.stderr[:1500]}"
+    return json.loads(result.stdout)
+
+
+def test_hover_identifies_a_curve(interaction: dict) -> None:
+    """Thirty overlaid profiles are a texture until you can name one."""
+    assert interaction["errors"] == []
+    assert interaction["overlay"], "no hover target attached to the chart"
+    label = interaction["label"]
+    assert label, "hovering produced no identifying label"
+    assert "case" in label and "%" in label and "h" in label, (
+        f"label should name the curve and read off its value; got {label!r}"
+    )
+    assert interaction["marker"], "no point marker shown at the hovered position"
+
+
+def test_clicking_pins_a_curve(interaction: dict) -> None:
+    assert interaction["dimmedAfterClick"] > 0, (
+        "clicking did not isolate a curve; the others should dim"
+    )
+
+
+def test_replicate_spread_is_drawn_as_a_band(interaction: dict) -> None:
+    assert interaction["bands"] > 0, "no +/-1 SD band rendered"
