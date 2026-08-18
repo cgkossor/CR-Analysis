@@ -95,6 +95,137 @@ def _replicate_sd(a: Analysis, case: int, grade: str) -> np.ndarray:
     return out
 
 
+#: Contour grids are downsampled for the browser. Full resolution is for the
+#: printed figures; the dashboard redraws on every interaction and a 60x60 grid
+#: per response per grade would dominate the payload for no visible gain.
+DASHBOARD_GRID = 26
+
+
+def _downsample(rows: tuple[tuple[float | None, ...], ...], target: int) -> list[list[Any]]:
+    if not rows:
+        return []
+    step_r = max(len(rows) // target, 1)
+    step_c = max(len(rows[0]) // target, 1)
+    return [
+        [None if v is None else round(float(v), 2) for v in row[::step_c]]
+        for row in rows[::step_r]
+    ]
+
+
+def _doe_payload(analysis: Analysis) -> dict[str, Any]:
+    """Serialise the classical DoE analysis for the dashboard."""
+    responses = []
+    unavailable = []
+    for ra in analysis.doe.responses:
+        if not ra.usable:
+            # Say why rather than omitting it. A response that quietly disappears
+            # looks like it was never asked for.
+            unavailable.append({
+                "key": ra.response.spec.key,
+                "label": ra.response.spec.label,
+                "reason": (
+                    "The model is not estimable from the points this response has. "
+                    + " ".join(ra.notes)
+                ).strip(),
+                "n_missing": ra.response.n_missing,
+                "n_total": ra.response.n_total,
+            })
+            continue
+        table = ra.anova
+        responses.append({
+            "key": ra.response.spec.key,
+            "label": ra.response.spec.label,
+            "units": ra.response.spec.units,
+            "spec_note": ra.response.spec.note,
+            "model": ra.spec.label,
+            "terms": list(ra.kept_terms),
+            "n_obs": table.n_obs,
+            "n_missing": ra.response.n_missing,
+            "coverage_note": ra.response.coverage_note,
+            "summary": {
+                "s": _clean(table.s),
+                "r2": _clean(table.r_squared),
+                "adj_r2": _clean(table.adj_r_squared),
+                "pred_r2": _clean(table.pred_r_squared),
+                "residual_df": table.residual_df,
+            },
+            "anova": {
+                "model": {
+                    "source": table.model_row.source, "df": table.model_row.df,
+                    "adj_ss": _clean(table.model_row.adj_ss),
+                    "adj_ms": _clean(table.model_row.adj_ms),
+                    "f": _clean(table.model_row.f_value),
+                    "p": _clean(table.model_row.p_value),
+                },
+                "rows": [
+                    {
+                        "source": r.source, "df": r.df,
+                        "adj_ss": _clean(r.adj_ss), "adj_ms": _clean(r.adj_ms),
+                        "f": _clean(r.f_value), "p": _clean(r.p_value),
+                        "group": r.is_group,
+                    }
+                    for r in table.rows
+                ],
+                "residual": {"df": table.residual_df, "ss": _clean(table.residual_ss)},
+                "total": {"df": table.total_df, "ss": _clean(table.total_ss)},
+                "notes": list(table.notes),
+            },
+            "effects": {
+                "terms": [e.term for e in ra.ranking.effects],
+                "abs_t": _clean([e.abs_t for e in ra.ranking.effects]),
+                "significant": [e.significant for e in ra.ranking.effects],
+                "quantiles": _clean(ra.ranking.half_normal_quantiles),
+                "t_critical": _clean(ra.ranking.t_critical),
+                "bonferroni": _clean(ra.ranking.bonferroni_t),
+                "note": ra.ranking.note,
+            },
+            "traces": [
+                {
+                    "factor": t.factor, "label": t.label,
+                    "x": _clean(t.x_values), "y": _clean(t.y_values),
+                }
+                for t in ra.traces
+            ],
+            "interaction": {
+                "factor": ra.interactions[0].factor,
+                "label": ra.interactions[0].label,
+                "x": _clean(ra.interactions[0].x_values),
+                "series": [
+                    {"grade": g, "y": _clean(ys)} for g, ys in ra.interactions[0].series
+                ],
+                "parallel": ra.interactions[0].parallel,
+                "divergence": _clean(ra.interactions[0].divergence),
+            },
+            "grids": [
+                {
+                    "grade": g.grade,
+                    "viscosity_cp": _clean(g.viscosity_cp),
+                    "api_axis": _clean(list(g.api_axis)[::max(len(g.api_axis)//DASHBOARD_GRID,1)]),
+                    "hpmc_axis": _clean(
+                        list(g.hpmc_axis)[::max(len(g.hpmc_axis)//DASHBOARD_GRID,1)]
+                    ),
+                    "z": _downsample(g.z, DASHBOARD_GRID),
+                    "points": _clean([[p[0], p[1]] for p in g.design_points]),
+                }
+                for g in ra.grids
+            ],
+            "scale": _clean(list(ra.scale)),
+            "takeaways": {
+                "anova": ra.takeaway_anova,
+                "effects": ra.takeaway_effects,
+                "traces": ra.takeaway_traces,
+                "contour": ra.takeaway_contour,
+                "interaction": ra.interactions[0].interpretation,
+            },
+            "notes": list(ra.notes),
+        })
+    return {
+        "responses": responses,
+        "unavailable": unavailable,
+        "method_notes": analysis.doe.method_notes,
+    }
+
+
 def build_payload(
     analysis: Analysis,
     stress: StressTest | None = None,
@@ -433,6 +564,7 @@ def build_payload(
         "validation": validation,
         "equivalence": equivalence,
         "levers": _frame(a.lever_effects),
+        "doe": _doe_payload(a),
     }
 
     if diagnostics is not None:

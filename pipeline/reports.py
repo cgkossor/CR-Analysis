@@ -402,3 +402,80 @@ def render_guidelines(analysis: Analysis, stress: StressTest) -> str:
         "inside the first 2 h."
     )
     return "\n".join(out) + "\n"
+
+
+def render_doe(analysis: Analysis) -> str:
+    """The classical DoE report: takeaways first, tables underneath."""
+    out: list[str] = ["# DoE analysis on named responses\n", _banner(analysis)]
+    add = out.append
+
+    add(
+        "Response surfaces fitted directly on the quantities a formulator names — "
+        "release times and % released — rather than on the Weibull parameters. The "
+        "Weibull model still exists, but only to reconstruct predicted curves for the "
+        "formulator tool; nothing below depends on reading it.\n"
+    )
+    add(
+        "Each response chooses its own model. The shape that fits release timing is "
+        "not necessarily the shape that fits completeness, and imposing one model on "
+        "all of them would flatter some responses and misrepresent others.\n"
+    )
+
+    for ra in analysis.doe.responses:
+        spec = ra.response.spec
+        add(f"\n## {spec.label} ({spec.units})\n")
+        if not ra.usable:
+            add(
+                "Not estimable from the points this response has. "
+                + " ".join(ra.notes)
+            )
+            continue
+
+        table = ra.anova
+        add(
+            f"**Model.** `{ra.spec.label}`, {len(ra.kept_terms)} terms, "
+            f"{table.n_obs} design points, {table.residual_df} residual df."
+        )
+        add(
+            f"S = {table.s:.4g} {spec.units} | R-sq = {table.r_squared:.2%} | "
+            f"R-sq(adj) = {table.adj_r_squared:.2%} | "
+            f"**R-sq(pred) = {table.pred_r_squared:.2%}**\n"
+        )
+        add(f"\n{ra.takeaway_anova}\n")
+        add(f"\n**Levers.** {ra.takeaway_traces}\n")
+        add(f"\n**Interaction.** {ra.interactions[0].interpretation}\n")
+        if ra.takeaway_contour:
+            add(f"\n**Design space.** {ra.takeaway_contour}\n")
+        add(f"\n**Effects.** {ra.takeaway_effects}\n")
+
+        add("\n| Source | DF | Adj SS | Adj MS | F | P |")
+        add("|---|---|---|---|---|---|")
+        m = table.model_row
+        add(
+            f"| **Model** | {m.df} | {m.adj_ss:.3f} | {m.adj_ms:.3f} | "
+            f"{m.f_value:.2f} | {m.p_value:.4g} |"
+        )
+        for row in table.rows:
+            if not row.is_group:
+                continue
+            add(
+                f"| &nbsp;&nbsp;{row.source} | {row.df} | {row.adj_ss:.3f} | "
+                f"{row.adj_ms:.3f} | {row.f_value:.2f} | {row.p_value:.4g} |"
+            )
+        add(f"| **Residual** | {table.residual_df} | {table.residual_ss:.3f} | | | |")
+        add(f"| **Total** | {table.total_df} | {table.total_ss:.3f} | | | |")
+
+        for note in list(ra.notes) + list(table.notes):
+            add(f"\n- {note}")
+
+    if analysis.doe.responses:
+        add("\n## How to read these\n")
+        for key in (
+            "anova", "model_summary", "cox_trace", "interaction",
+            "contour", "pareto", "half_normal",
+        ):
+            method_note = analysis.doe.method_notes.get(key)
+            if method_note:
+                add(f"\n**{key.replace('_', ' ').title()}.** {method_note}")
+
+    return "\n".join(out) + "\n"

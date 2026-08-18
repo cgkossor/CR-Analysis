@@ -389,7 +389,8 @@
     ["explorer", "Database Explorer"],
     ["metrics", "Analysis & Metrics"],
     ["design", "Design Diagnostics"],
-    ["surfaces", "Response Surfaces"],
+    ["doe", "DoE Analysis"],
+    ["surfaces", "Weibull Surfaces"],
     ["equivalence", "Equivalence Sets"],
     ["stress", "Design Stress Test"],
     ["diagnostics", "Diagnostics"],
@@ -1302,6 +1303,15 @@
     renderInverse();
     renderGuidelines();
     renderDiagnostics();
+
+    /* The DoE view lives in its own file; hand it the chart primitives rather
+     * than letting it reach into this closure. */
+    if (window.CRDoe) {
+      window.CRDoe.render(D, {
+        $: $, el: el, esc: esc, fmt: fmt, svgEl: svgEl,
+        Chart: Chart, table: table, extent: extent, withTip: withTip
+      });
+    }
     showTab("explorer");
   }
 

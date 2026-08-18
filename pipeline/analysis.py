@@ -17,6 +17,8 @@ from pipeline import config
 from pipeline.design.matrix import ModelSpec, build_model_matrix, code_process, term_names
 from pipeline.design.report import analyse as analyse_design
 from pipeline.design.report import design_points
+from pipeline.doe.analysis import DoeAnalysis
+from pipeline.doe.analysis import run as run_doe
 from pipeline.equivalence.sets import (
     EquivalenceSet,
     EquivalenceSummary,
@@ -77,6 +79,7 @@ class Analysis:
     time_grid_info: TimeGrid
     observed_profiles: dict[tuple[int, str], np.ndarray]
     model_spec: ModelSpec
+    doe: DoeAnalysis
 
 
 def _mean_profiles(
@@ -225,6 +228,11 @@ def run_analysis(db: Database) -> Analysis:
     eq_sets = build_equivalence_sets(grid, observed, compositions, cv_by_point)
     eq_summary = summarise(eq_sets)
 
+    # Classical DoE on the named responses. Fitted independently of the
+    # Weibull two-stage model, because these are the quantities a
+    # formulator reads and they deserve their own model selection.
+    doe = run_doe(merged, replicates, power)
+
     levers = _lever_effects(
         surfaces["log10_td"], spec, merged, list(surfaces["log10_td"].kept_terms)
     )
@@ -249,6 +257,7 @@ def run_analysis(db: Database) -> Analysis:
         time_grid_info=grid_info,
         observed_profiles=observed,
         model_spec=spec,
+        doe=doe,
     )
 
 

@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 
 from pipeline import config
 from pipeline.analysis import Analysis
+from pipeline.figures.doe import render_doe_figures
 from pipeline.stress.subsets import StressTest
 
 GRADE_COLOURS = {"K100LV": "#3b7dd8", "K4M": "#d9822b", "K100M": "#8e5bb5"}
@@ -334,6 +335,11 @@ def render_all(analysis: Analysis, stress: StressTest, out_dir: Path) -> list[Fi
         "Lactose is the balance to 100 wt%, so this plane carries the whole mixture.",
         fig,
     )
+
+    # Classical DoE figures. Ranked ahead of most of the profile plots: these are
+    # what a formulator opens first.
+    for name, rank, caption in render_doe_figures(analysis.doe.responses, out_dir, banner):
+        figures.append(Figure(name, rank, caption, f"{name}.svg", f"{name}.png"))
 
     manifest = [
         {"name": f.name, "rank": f.rank, "caption": f.caption, "svg": f.svg, "png": f.png}

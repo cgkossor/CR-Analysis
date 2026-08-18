@@ -34,7 +34,7 @@ vc.on("error", (...a) => errors.push("console.error: " + a.join(" ")));
 const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
   { runScripts: "dangerously", virtualConsole: vc });
 const w = dom.window;
-for (const f of ["data.js", "model.js", "app.js"]) {
+for (const f of ["data.js", "model.js", "doe.js", "app.js"]) {
   try { w.eval(fs.readFileSync(path.join(dash, f), "utf8")); }
   catch (e) { errors.push(f + " threw: " + e.message); }
 }
@@ -67,6 +67,7 @@ EXPECTED_TABS = {
     "explorer",
     "metrics",
     "design",
+    "doe",
     "surfaces",
     "equivalence",
     "stress",
@@ -124,7 +125,8 @@ def test_every_tab_renders_content(rendered: dict) -> None:
 
 
 def test_charts_render_where_expected(rendered: dict) -> None:
-    for name in ("explorer", "design", "surfaces", "equivalence", "stress", "formulator"):
+    for name in ("explorer", "design", "doe", "surfaces", "equivalence",
+                 "stress", "formulator"):
         assert rendered["tabs"][name]["svg"] >= 1, f"tab {name} rendered no chart"
 
 
@@ -179,7 +181,7 @@ vc.on("error", (...a) => errors.push("console.error: " + a.join(" ")));
 const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
   { runScripts: "dangerously", virtualConsole: vc });
 const w = dom.window;
-for (const f of ["data.js", "model.js", "app.js"]) {
+for (const f of ["data.js", "model.js", "doe.js", "app.js"]) {
   w.eval(fs.readFileSync(path.join(dash, f), "utf8"));
 }
 w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
@@ -240,3 +242,17 @@ def test_clicking_pins_a_curve(interaction: dict) -> None:
 
 def test_replicate_spread_is_drawn_as_a_band(interaction: dict) -> None:
     assert interaction["bands"] > 0, "no +/-1 SD band rendered"
+
+
+def test_doe_tab_leads_with_plots_and_takeaways(rendered: dict) -> None:
+    """Issues 5, 6 and 9: the classical DoE analysis has to be visible and read.
+
+    A tab full of coefficient tables is what prompted "lackluster"; the point of
+    this one is that a finding is stated before any table appears.
+    """
+    doe = rendered["tabs"]["doe"]
+    assert doe["chars"] > 2000, f"DoE tab rendered {doe['chars']} chars"
+    assert doe["svg"] >= 4, (
+        f"only {doe['svg']} charts on the DoE tab; contour, interaction, traces, "
+        "Pareto and half-normal should all render"
+    )

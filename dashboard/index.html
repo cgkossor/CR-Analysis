@@ -82,6 +82,50 @@
     <div id="sf-levers"></div>
   </section>
 
+  <section class="panel" data-tab="doe" hidden>
+    <h2>DoE Analysis</h2>
+    <p class="lede">Response surfaces fitted directly on the quantities you name —
+      release times and % released — rather than on curve-fitting parameters.
+      Every plot carries what this data shows; the method notes explain how to
+      read it.</p>
+    <div class="controls">
+      <label>Response <select id="doe-response"></select></label>
+      <span id="doe-model" class="hint" style="margin:0"></span>
+    </div>
+    <div id="doe-summary" class="cards"></div>
+    <div id="doe-notes"></div>
+
+    <h3>Where the sweet spot is</h3>
+    <div id="doe-take-contour" class="callout"></div>
+    <div id="doe-contour" class="chart"></div>
+    <details><summary>How to read a contour plot</summary><p id="m-contour"></p></details>
+
+    <h3>Do the levers interact?</h3>
+    <div id="doe-take-interaction" class="callout"></div>
+    <div id="doe-interaction" class="chart"></div>
+    <details><summary>How to read an interaction plot</summary><p id="m-interaction"></p></details>
+
+    <h3>Which component moves this response?</h3>
+    <div id="doe-take-traces" class="callout"></div>
+    <div id="doe-traces" class="chart"></div>
+    <details><summary>What a Cox response trace is</summary><p id="m-cox"></p></details>
+
+    <h3>Which terms matter?</h3>
+    <div id="doe-take-effects" class="callout"></div>
+    <div class="split">
+      <div id="doe-pareto" class="chart"></div>
+      <div id="doe-halfnormal" class="chart"></div>
+    </div>
+    <details><summary>Pareto vs half-normal — and which to trust</summary>
+      <p id="m-pareto"></p><p id="m-halfnormal"></p></details>
+
+    <h3>Analysis of variance</h3>
+    <div id="doe-take-anova" class="callout"></div>
+    <details><summary>ANOVA table</summary><div id="doe-anova" class="tablewrap"></div></details>
+    <details><summary>How to read an ANOVA</summary><p id="m-anova"></p><p id="m-summary"></p></details>
+    <div id="doe-unavailable"></div>
+  </section>
+
   <section class="panel" data-tab="equivalence" hidden>
     <h2>Equivalence Sets</h2>
     <p class="lede">Formulations whose measured profiles are similar by f2. This is where
@@ -167,6 +211,7 @@
 
 <script src="data.js"></script>
 <script src="model.js"></script>
+<script src="doe.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -25,6 +25,7 @@ from pipeline.io.load import load_database
 from pipeline.io.quality import render_markdown as quality_markdown
 from pipeline.io.schema import SchemaError
 from pipeline.reports import (
+    render_doe,
     render_equivalence,
     render_guidelines,
     render_responses,
@@ -89,6 +90,9 @@ def _write_reports(analysis: Analysis, stress: StressTest, reports: Path) -> Non
     )
     (reports / "response_space.md").write_text(
         render_responses(analysis), encoding="utf-8", newline="\n"
+    )
+    (reports / "doe_analysis.md").write_text(
+        render_doe(analysis), encoding="utf-8", newline="\n"
     )
     (reports / "surfaces.md").write_text(
         render_surfaces(analysis), encoding="utf-8", newline="\n"
