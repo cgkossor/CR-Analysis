@@ -63,7 +63,7 @@ def build_standalone_html(dashboard: Path, out: Path) -> Path:
     )
 
     scripts = ""
-    for name in ("data.js", "model.js", "doe.js", "formulator.js", "app.js"):
+    for name in ("data.js", "model.js", "doe.js", "formulator.js", "audit.js", "app.js"):
         source = dashboard / name
         if not source.exists():
             raise FileNotFoundError(
@@ -75,7 +75,7 @@ def build_standalone_html(dashboard: Path, out: Path) -> Path:
         body = body.replace("</script>", "<\\/script>")
         scripts += f"<script>\n{body}\n</script>\n"
 
-    for name in ("data.js", "model.js", "doe.js", "formulator.js", "app.js"):
+    for name in ("data.js", "model.js", "doe.js", "formulator.js", "audit.js", "app.js"):
         html = html.replace(f'<script src="{name}"></script>\n', "")
         html = html.replace(f'<script src="{name}"></script>', "")
     html = html.replace("</body>", scripts + "</body>")

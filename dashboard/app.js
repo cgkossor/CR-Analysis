@@ -395,7 +395,8 @@
     ["stress", "Design Stress Test"],
     ["diagnostics", "Diagnostics"],
     ["formulator", "Formulator Tool"],
-    ["guidelines", "Guidelines & Limitations"]
+    ["guidelines", "Guidelines & Limitations"],
+    ["admin", "Admin / Audit"]
   ];
 
   function buildTabs() {
@@ -1214,84 +1215,95 @@
       return;
     }
 
-    if (D.meta.is_synthetic) {
-      var p = $("provenance");
-      p.hidden = false;
-      p.innerHTML = "PLACEHOLDER DATA — SYNTHETIC, NOT EXPERIMENTAL" +
-        "<small>Every number in this dashboard derives from a generated development " +
-        "database. Nothing here is a measurement, and no result may support a formulation " +
-        "decision. Source: " + esc(D.meta.source_file) + "</small>";
-    }
+    /* Each step runs in isolation (audit.js): one that throws is counted on the
+     * Admin tab, and the steps after it still run. */
+    var track = window.CRAudit ? window.CRAudit.track : function (key, fn) { fn(); };
 
-    $("subtitle").textContent = D.quality.apis.join(", ") + " · " + D.quality.n_ids +
-      " formulations × " + D.quality.n_replicates + " replicates · model " + D.meta.model;
-    var cvOk = D.validation.profile_rmse_pct !== null &&
-      isFinite(D.validation.profile_rmse_pct);
-    $("cv-badge").innerHTML = cvOk
-      ? "<small>cross-validated error</small><b>" +
-        fmt(D.validation.profile_rmse_pct, 2) + "%</b><small>released, LOFO ×" +
-        D.validation.n_folds + "</small>"
-      : "<small>cross-validated error</small><b>unavailable</b>" +
-        "<small>see Guidelines</small>";
-    $("foot-meta").textContent = "Generated from " + D.meta.source_file +
-      " · vessel " + D.meta.vessel_volume_ml + " mL · viscosity source: " +
-      D.meta.viscosity_source + " · seed " + D.meta.seed +
-      " · f2 threshold " + D.meta.f2_threshold + " · offline, no network calls";
+    track("header", function () {
+      if (D.meta.is_synthetic) {
+        var p = $("provenance");
+        p.hidden = false;
+        p.innerHTML = "PLACEHOLDER DATA — SYNTHETIC, NOT EXPERIMENTAL" +
+          "<small>Every number in this dashboard derives from a generated development " +
+          "database. Nothing here is a measurement, and no result may support a formulation " +
+          "decision. Source: " + esc(D.meta.source_file) + "</small>";
+      }
+
+      $("subtitle").textContent = D.quality.apis.join(", ") + " · " + D.quality.n_ids +
+        " formulations × " + D.quality.n_replicates + " replicates · model " + D.meta.model;
+      var cvOk = D.validation.profile_rmse_pct !== null &&
+        isFinite(D.validation.profile_rmse_pct);
+      $("cv-badge").innerHTML = cvOk
+        ? "<small>cross-validated error</small><b>" +
+          fmt(D.validation.profile_rmse_pct, 2) + "%</b><small>released, LOFO ×" +
+          D.validation.n_folds + "</small>"
+        : "<small>cross-validated error</small><b>unavailable</b>" +
+          "<small>see Guidelines</small>";
+      $("foot-meta").textContent = "Generated from " + D.meta.source_file +
+        " · vessel " + D.meta.vessel_volume_ml + " mL · viscosity source: " +
+        D.meta.viscosity_source + " · seed " + D.meta.seed +
+        " · f2 threshold " + D.meta.f2_threshold + " · offline, no network calls";
+    });
 
     buildTabs();
 
-    var grades = {};
-    D.design_points.forEach(function (p) { grades[p.grade] = p.log10_visc; });
-    var exGrade = $("ex-grade");
-    exGrade.appendChild(el("option", { value: "" }, "all grades"));
-    Object.keys(grades).sort(function (a, b) { return grades[a] - grades[b]; }).forEach(function (g) {
-      exGrade.appendChild(el("option", { value: g }, g));
-    });
-    gradeOptions($("fw-grade"));
-
-    Object.keys(D.surfaces).forEach(function (k) {
-      $("sf-response").appendChild(el("option", { value: k }, k));
-    });
-
-    D.equivalence.sets.forEach(function (e) {
-      $("eq-target").appendChild(el("option", { value: e.case + "|" + e.grade },
-        "case " + e.case + " / " + e.grade + " (" + e.members.length + " members)"));
-    });
-
-    ["ex-grade", "ex-censoring", "ex-replicates", "ex-band"].forEach(function (id) {
-      $(id).addEventListener("change", renderExplorer);
-    });
-    $("sf-response").addEventListener("change", renderSurfaces);
-    $("eq-target").addEventListener("change", renderEquivalence);
-    $("eq-cross-only").addEventListener("change", renderEquivalence);
-    ["fw-api", "fw-hpmc", "fw-lac", "fw-grade", "fw-dose"].forEach(function (id) {
-      $(id).addEventListener("input", renderForward);
-      $(id).addEventListener("change", renderForward);
-    });
-
-    renderExplorer();
-    renderMetrics();
-    renderDesign();
-    renderSurfaces();
-    renderEquivalence();
-    renderStress();
-    renderForward();
-    renderGuidelines();
-    renderDiagnostics();
-
-    /* The DoE view lives in its own file; hand it the chart primitives rather
-     * than letting it reach into this closure. */
-    if (window.CRDoe) {
-      window.CRDoe.render(D, {
-        $: $, el: el, esc: esc, fmt: fmt, svgEl: svgEl,
-        Chart: Chart, table: table, extent: extent, withTip: withTip
+    track("controls", function () {
+      var grades = {};
+      D.design_points.forEach(function (p) { grades[p.grade] = p.log10_visc; });
+      var exGrade = $("ex-grade");
+      exGrade.appendChild(el("option", { value: "" }, "all grades"));
+      Object.keys(grades).sort(function (a, b) { return grades[a] - grades[b]; }).forEach(function (g) {
+        exGrade.appendChild(el("option", { value: g }, g));
       });
-    }
-    if (window.CRFormulator) {
-      window.CRFormulator.render(D, {
-        $: $, el: el, esc: esc, fmt: fmt, svgEl: svgEl,
-        Chart: Chart, table: table, extent: extent, withTip: withTip
+      gradeOptions($("fw-grade"));
+
+      Object.keys(D.surfaces).forEach(function (k) {
+        $("sf-response").appendChild(el("option", { value: k }, k));
       });
+
+      D.equivalence.sets.forEach(function (e) {
+        $("eq-target").appendChild(el("option", { value: e.case + "|" + e.grade },
+          "case " + e.case + " / " + e.grade + " (" + e.members.length + " members)"));
+      });
+
+      ["ex-grade", "ex-censoring", "ex-replicates", "ex-band"].forEach(function (id) {
+        $(id).addEventListener("change", renderExplorer);
+      });
+      $("sf-response").addEventListener("change", renderSurfaces);
+      $("eq-target").addEventListener("change", renderEquivalence);
+      $("eq-cross-only").addEventListener("change", renderEquivalence);
+      ["fw-api", "fw-hpmc", "fw-lac", "fw-grade", "fw-dose"].forEach(function (id) {
+        $(id).addEventListener("input", renderForward);
+        $(id).addEventListener("change", renderForward);
+      });
+    });
+
+    track("explorer", renderExplorer);
+    track("metrics", renderMetrics);
+    track("design", renderDesign);
+    track("surfaces", renderSurfaces);
+    track("equivalence", renderEquivalence);
+    track("stress", renderStress);
+    track("formulator", renderForward);
+    track("guidelines", renderGuidelines);
+    track("diagnostics", renderDiagnostics);
+
+    /* The DoE and formulator views live in their own files; hand them the chart
+     * primitives rather than letting them reach into this closure. */
+    var api = {
+      $: $, el: el, esc: esc, fmt: fmt, svgEl: svgEl,
+      Chart: Chart, table: table, extent: extent, withTip: withTip
+    };
+    track("doe", function () { if (window.CRDoe) window.CRDoe.render(D, api); });
+    track("formulator", function () {
+      if (window.CRFormulator) window.CRFormulator.render(D, api);
+    });
+
+    /* Last, so it can see how every other tab fared. */
+    if (window.CRAudit) {
+      var keys = ["header", "controls"].concat(TABS.map(function (t) { return t[0]; })
+        .filter(function (k) { return k !== "admin"; }));
+      track("admin", function () { window.CRAudit.render(D, api, keys); });
     }
     showTab("explorer");
   }

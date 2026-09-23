@@ -34,7 +34,7 @@ vc.on("error", (...a) => errors.push("console.error: " + a.join(" ")));
 const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
   { runScripts: "dangerously", virtualConsole: vc });
 const w = dom.window;
-for (const f of ["data.js", "model.js", "doe.js", "formulator.js", "app.js"]) {
+for (const f of ["data.js", "model.js", "doe.js", "formulator.js", "audit.js", "app.js"]) {
   try { w.eval(fs.readFileSync(path.join(dash, f), "utf8")); }
   catch (e) { errors.push(f + " threw: " + e.message); }
 }
@@ -59,6 +59,7 @@ process.stdout.write(JSON.stringify({
   g1Gate: d.body.innerHTML.indexOf("Insufficient data") >= 0,
   rows: d.querySelectorAll("tbody tr").length,
   tooltips: d.querySelectorAll("abbr.tip").length,
+  adminText: (d.getElementById("ad-text") || {}).value || "",
   errors,
 }));
 """
@@ -74,6 +75,7 @@ EXPECTED_TABS = {
     "diagnostics",
     "formulator",
     "guidelines",
+    "admin",
 }
 
 
@@ -151,6 +153,20 @@ def test_diagnostics_tab_surfaces_the_verdict(rendered: dict) -> None:
     )
 
 
+def test_admin_tab_produces_a_shareable_report(rendered: dict) -> None:
+    """The copyable audit must be fenced, integer-only, and report every tab rendered."""
+    from pipeline.audit import REPORT_LINE as LINE
+
+    lines = rendered["adminText"].splitlines()
+    assert lines and lines[0].startswith("=== CR-AUDIT"), "admin report missing"
+    assert lines[-1].startswith("=== END CR-AUDIT")
+    bad = [ln for ln in lines if not LINE.match(ln)]
+    assert not bad, f"admin report lines outside the audit grammar: {bad[:5]}"
+    assert "W14 tabs_failed=0" in lines or any(
+        ln.endswith(" tabs_failed=0") for ln in lines
+    ), "a dashboard tab failed to render"
+
+
 def test_statistics_carry_definitions(rendered: dict) -> None:
     """A number a reader cannot interpret is not evidence (issues 8 and 10)."""
     assert rendered["tooltips"] > 10, (
@@ -181,7 +197,7 @@ vc.on("error", (...a) => errors.push("console.error: " + a.join(" ")));
 const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
   { runScripts: "dangerously", virtualConsole: vc });
 const w = dom.window;
-for (const f of ["data.js", "model.js", "doe.js", "formulator.js", "app.js"]) {
+for (const f of ["data.js", "model.js", "doe.js", "formulator.js", "audit.js", "app.js"]) {
   w.eval(fs.readFileSync(path.join(dash, f), "utf8"));
 }
 w.document.dispatchEvent(new w.Event("DOMContentLoaded"));

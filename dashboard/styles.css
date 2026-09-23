@@ -141,3 +141,16 @@ abbr.tip:hover { color: var(--accent); text-decoration-color: var(--accent); }
 #dg-all summary:hover { color: var(--accent); }
 #dg-all details[open] summary { border-bottom: 1px solid var(--line); }
 #dg-all .tablewrap { border: 0; border-radius: 0; max-height: 340px; }
+
+/* --- Admin / Audit ------------------------------------------------------- */
+#ad-text {
+  width: 100%; box-sizing: border-box; font: 12px/1.4 ui-monospace, Consolas, monospace;
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px;
+}
+#ad-copy { padding: 5px 12px; cursor: pointer; }
+#ad-tables details {
+  border: 1px solid var(--line); border-radius: 8px;
+  margin-bottom: 8px; background: #fbfcfe;
+}
+#ad-tables summary { cursor: pointer; padding: 9px 13px; font-weight: 600; font-size: 13px; }
+#ad-tables .tablewrap { border: 0; border-radius: 0; max-height: 340px; }

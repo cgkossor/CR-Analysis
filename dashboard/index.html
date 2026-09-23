@@ -218,6 +218,19 @@
     <div id="gl-body"></div>
   </section>
 
+  <section class="panel" data-tab="admin" hidden>
+    <h2>Admin / Audit</h2>
+    <p class="lede">How this database met the code's assumptions, as integers and
+      0/1 flags only. No value, name, header or ID appears here, so the report
+      below can be copied and shared without disclosing any data.</p>
+    <div id="ad-verdict" class="callout"></div>
+    <p><button type="button" id="ad-copy">Copy report</button>
+      <span class="hint">Or run <code>python -m pipeline.audit --input &lt;file&gt;</code>
+      for the pipeline half in a terminal.</span></p>
+    <textarea id="ad-text" readonly rows="10" spellcheck="false"></textarea>
+    <div id="ad-tables"></div>
+  </section>
+
 </main>
 
 <footer class="foot">
@@ -228,6 +241,7 @@
 <script src="model.js"></script>
 <script src="doe.js"></script>
 <script src="formulator.js"></script>
+<script src="audit.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
