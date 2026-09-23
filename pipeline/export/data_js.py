@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -26,6 +26,10 @@ from pipeline.glossary import as_dict as glossary_dict
 from pipeline.optimize.goals import as_payload as goal_payload
 from pipeline.profiles.grid import project_onto_grid
 from pipeline.stress.subsets import StressTest
+
+if TYPE_CHECKING:
+    from pipeline.disintegration.analysis import DisintegrationAnalysis
+    from pipeline.doe.analysis import DoeAnalysis
 
 #: Decimal places used for every exported float. Fixed so that two runs cannot
 #: differ in the last bit of a repr.
@@ -114,11 +118,11 @@ def _downsample(rows: tuple[tuple[float | None, ...], ...], target: int) -> list
     ]
 
 
-def _doe_payload(analysis: Analysis) -> dict[str, Any]:
-    """Serialise the classical DoE analysis for the dashboard."""
+def _doe_payload(doe: DoeAnalysis) -> dict[str, Any]:
+    """Serialise a classical DoE analysis for the dashboard."""
     responses = []
     unavailable = []
-    for ra in analysis.doe.responses:
+    for ra in doe.responses:
         if not ra.usable:
             # Say why rather than omitting it. A response that quietly disappears
             # looks like it was never asked for.
@@ -232,7 +236,93 @@ def _doe_payload(analysis: Analysis) -> dict[str, Any]:
     return {
         "responses": responses,
         "unavailable": unavailable,
-        "method_notes": analysis.doe.method_notes,
+        "method_notes": doe.method_notes,
+    }
+
+
+#: The disintegration responses offered in the DoE tab. log10_dt exists for
+#: model comparison inside the section and would only duplicate dt_h there.
+DT_DOE_KEYS = ("dt_h",)
+
+
+def _disintegration_payload(r: DisintegrationAnalysis) -> dict[str, Any]:
+    """Serialise the disintegration section for its dashboard tab."""
+    m = r.matched
+    td = r.correlation.by_key("td_h")
+    block = r.grades.block_dt
+    pts = r.precision.points
+    return {
+        "synthetic": r.is_synthetic,
+        "test_end_h": _clean(r.data.test_end_h),
+        "grade_order": list(r.grade_order),
+        "summary": {
+            "formulations": len(pts),
+            "replicates_run": len(r.data.long),
+            "censored_replicates": int(r.data.long["censored"].sum()),
+            "censored_formulations": int(pts["censored"].sum()),
+            "matched": r.matching.n_matched,
+            "icc": _clean(r.precision.icc),
+            "spearman_td": _clean(td.spearman) if td else None,
+            "spearman_td_n": td.n if td else 0,
+        },
+        "points": [
+            {
+                "case": int(row.case),
+                "grade": str(row.grade),
+                "api_wt": _clean(row.api_wt),
+                "hpmc_wt": _clean(row.hpmc_wt),
+                "lactose_wt": _clean(row.lactose_wt),
+                "dt_h": _clean(row.dt_h),
+                "ci_lo_h": _clean(row.ci_lo_h),
+                "ci_hi_h": _clean(row.ci_hi_h),
+                "n": int(row.n),
+                "cv": _clean(row.cv),
+                "censored": bool(row.dt_censored),
+                "td_h": _clean(row.td_h),
+                "t50": _clean(row.t50),
+                "t80": _clean(row.t80),
+                "lag": _clean(row.erosion_lag),
+            }
+            for row in m.itertuples()
+        ],
+        "replicates": [
+            {
+                "case": int(row.case),
+                "grade": str(row.grade),
+                "replicate": int(row.replicate),
+                "dt_h": _clean(row.dt_h),
+                "censored": bool(row.censored),
+            }
+            for row in r.data.long.itertuples()
+        ],
+        "correlations": [
+            {
+                "key": c.metric.key,
+                "label": c.metric.label,
+                "n": c.n,
+                "spearman": _clean(c.spearman),
+                "lo": _clean(c.spearman_ci[0]),
+                "hi": _clean(c.spearman_ci[1]),
+            }
+            for c in r.correlation.table
+        ],
+        "grade_ratios": [
+            {
+                "a": c.a,
+                "b": c.b,
+                "ratio": _clean(c.ratio),
+                "lo": _clean(c.ci[0]),
+                "hi": _clean(c.ci[1]),
+                "p": _clean(c.p_adj),
+            }
+            for c in (block.contrasts if block is not None else ())
+        ],
+        "prediction": [
+            {"key": x.key, "label": x.label, "n": x.n, "q2": _clean(x.q2)} for x in r.loo
+        ],
+        "doe_keys": [
+            k for k in DT_DOE_KEYS if (fit := r.doe.by_key(k)) is not None and fit.usable
+        ],
     }
 
 
@@ -240,6 +330,7 @@ def build_payload(
     analysis: Analysis,
     stress: StressTest | None = None,
     diagnostics: Diagnostics | None = None,
+    disintegration: DisintegrationAnalysis | None = None,
 ) -> dict[str, Any]:
     """Assemble the dashboard payload."""
     a = analysis
@@ -574,7 +665,7 @@ def build_payload(
         "validation": validation,
         "equivalence": equivalence,
         "levers": _frame(a.lever_effects),
-        "doe": _doe_payload(a),
+        "doe": _doe_payload(a.doe),
         "goals": goal_payload(),
     }
 
@@ -592,6 +683,16 @@ def build_payload(
                 for c in diagnostics.checks
             ],
         }
+
+    if disintegration is not None:
+        payload["disintegration"] = _disintegration_payload(disintegration)
+        # Disintegration time gets the full DoE treatment in the DoE tab, listed
+        # after the dissolution responses and marked with the study it came from.
+        extra = _doe_payload(disintegration.doe)
+        for resp in extra["responses"]:
+            if resp["key"] in DT_DOE_KEYS:
+                resp["study"] = "disintegration"
+                payload["doe"]["responses"].append(resp)
 
     if stress is not None:
         payload["stress"] = {

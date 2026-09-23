@@ -14,7 +14,7 @@ import hashlib
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pipeline.analysis import SURFACE_RESPONSES, Analysis, run_analysis
 from pipeline.audit import AuditReport, run_audit, save
@@ -36,6 +36,9 @@ from pipeline.reports import (
     render_surfaces,
 )
 from pipeline.stress.subsets import StressTest, run_stress_test
+
+if TYPE_CHECKING:
+    from pipeline.disintegration.analysis import DisintegrationAnalysis
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -85,11 +88,24 @@ def _stress(analysis: Analysis) -> StressTest:
     )
 
 
+def _disintegration(analysis: Analysis, source: str) -> DisintegrationAnalysis | None:
+    """The disintegration section's result, or None when the workbook has no sheet."""
+    from pipeline.disintegration.analysis import run_disintegration
+    from pipeline.disintegration.load import load_disintegration
+
+    data = load_disintegration(source)
+    return run_disintegration(analysis, data) if data is not None else None
+
+
 def _payload(
-    analysis: Analysis, stress: StressTest, diagnostics: Diagnostics, source: str
+    analysis: Analysis,
+    stress: StressTest,
+    diagnostics: Diagnostics,
+    source: str,
+    disintegration: DisintegrationAnalysis | None = None,
 ) -> tuple[dict[str, Any], AuditReport]:
     """The dashboard payload, carrying its own audit for the Admin tab."""
-    payload = build_payload(analysis, stress, diagnostics)
+    payload = build_payload(analysis, stress, diagnostics, disintegration)
     audit = run_audit(source, analysis=analysis, stress=stress, payload=payload)
     payload["audit"] = audit.as_payload()
     return payload, audit
@@ -187,7 +203,16 @@ def _run(args: argparse.Namespace) -> int:
     diagnostics = write_diagnostics(analysis, stress, reports)
     print(f"Diagnostics -> {reports / 'diagnostics.md'} (+ .json)")
 
-    payload, audit = _payload(analysis, stress, diagnostics, args.input)
+    # Optional section: runs only when the workbook carries a Disintegration
+    # sheet. Before the payload, so the dashboard gets its tab.
+    from pipeline.disintegration.__main__ import run_section as run_disintegration_section
+
+    dt = run_disintegration_section(
+        analysis, args.input, out_root, figures=not args.skip_figures,
+        result=_disintegration(analysis, args.input),
+    )
+
+    payload, audit = _payload(analysis, stress, diagnostics, args.input, dt)
     data_path = write_data_js(payload, Path(args.dashboard) / "data.js")
     print(f"Dashboard data -> {data_path}")
 
@@ -196,13 +221,6 @@ def _run(args: argparse.Namespace) -> int:
 
         figures = render_all(analysis, stress, out_root / "figures")
         print(f"Figures -> {len(figures)} rendered in {out_root / 'figures'}")
-
-    # Optional section: runs only when the workbook carries a Disintegration sheet.
-    from pipeline.disintegration.__main__ import run_section as run_disintegration_section
-
-    run_disintegration_section(
-        analysis, args.input, out_root, figures=not args.skip_figures
-    )
 
     if args.check_determinism:
         first = hashlib.sha256(data_path.read_bytes()).hexdigest()
@@ -216,7 +234,10 @@ def _run(args: argparse.Namespace) -> int:
             # to pick up a stray timestamp or dict ordering.
             repeat_diag = write_diagnostics(repeat, repeat_stress, Path(tmp))
             again = write_data_js(
-                _payload(repeat, repeat_stress, repeat_diag, args.input)[0],
+                _payload(
+                    repeat, repeat_stress, repeat_diag, args.input,
+                    _disintegration(repeat, args.input),
+                )[0],
                 Path(tmp) / "data.js",
             )
             second = hashlib.sha256(again.read_bytes()).hexdigest()

@@ -30,14 +30,21 @@ def run_section(
     *,
     figures: bool = True,
     formats: tuple[str, ...] = ("png",),
+    result: DisintegrationAnalysis | None = None,
 ) -> DisintegrationAnalysis | None:
-    """Load, analyse and write everything; ``None`` when there is no DT sheet."""
+    """Load, analyse and write everything; ``None`` when there is no DT sheet.
+
+    Pass ``result`` when the caller has already run the analysis (pipeline.run
+    does, to put it in the dashboard payload), so it is not computed twice.
+    """
     from pipeline.disintegration import diagnostics, glossary, report
 
-    data = load_disintegration(source)
-    if data is None:
-        return None
-    r = run_disintegration(analysis, data)
+    if result is None:
+        data = load_disintegration(source)
+        if data is None:
+            return None
+        result = run_disintegration(analysis, data)
+    r = result
     reports = out_root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
 
