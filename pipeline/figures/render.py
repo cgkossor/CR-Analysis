@@ -12,6 +12,7 @@ built from the computed numbers so it cannot claim something the data do not sho
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +44,93 @@ def banner_for(analysis: Analysis) -> str | None:
 def grades_by_viscosity(analysis: Analysis) -> list[str]:
     pts = analysis.design_points.drop_duplicates("grade").sort_values("viscosity_cp")
     return [str(g) for g in pts["grade"]]
+
+
+@dataclass(frozen=True)
+class CaseStyle:
+    """How one case is drawn in every panel, and where it sits in the legend."""
+
+    style: pub.SeriesStyle
+    label: str
+    api_level: int
+    api_wt: float
+
+
+def _api_level(api: float, levels: list[float]) -> int:
+    """0 / 1 / 2 for the lower, middle and upper third of the tested API range."""
+    if len(levels) < 2:
+        return 0
+    position = levels.index(api) / (len(levels) - 1)
+    if position < 1 / 3 - 1e-9:
+        return 0
+    if position > 2 / 3 + 1e-9:
+        return 2
+    return 1
+
+
+def case_styles(analysis: Analysis) -> dict[int, CaseStyle]:
+    """A fixed style and legend label per case, shared by every panel.
+
+    Line style shows the API level; colour tells the cases within one level
+    apart. The label carries the composition, so the legend alone says which
+    recipe a line is: "Case 3: 22.5 / 29.5 / 48" is API / HPMC / lactose, wt%.
+    """
+    comp = analysis.design_points.drop_duplicates("case").sort_values("case")
+    levels = sorted(float(v) for v in comp["api_wt"].unique())
+    used: dict[int, int] = {}
+    out: dict[int, CaseStyle] = {}
+    for r in comp.itertuples():
+        level = _api_level(float(r.api_wt), levels)
+        k = used.get(level, 0)
+        used[level] = k + 1
+        style = pub.SeriesStyle(
+            pub.CASE_COLOURS[k % len(pub.CASE_COLOURS)], "o", pub.API_LEVEL_LINESTYLES[level]
+        )
+        label = f"Case {int(r.case)}: {r.api_wt:g} / {r.hpmc_wt:g} / {r.lactose_wt:g}"
+        out[int(r.case)] = CaseStyle(style, label, level, float(r.api_wt))
+    return out
+
+
+CASE_LEGEND_TITLE = "Case: API / HPMC / lactose (wt%). Line style shows the API level."
+
+
+def case_legend(fig: Figure, handles: dict[int, Line2D], styles: dict[int, CaseStyle]) -> None:
+    """One legend below the panels, one column per API level, each with a header.
+
+    Matplotlib fills legend columns top to bottom, so each level's block is
+    padded to the same height to keep it in its own column.
+    """
+    by_level: dict[int, list[int]] = {}
+    for case in sorted(handles):
+        by_level.setdefault(styles[case].api_level, []).append(case)
+    order = sorted(by_level)
+    height = max(len(v) for v in by_level.values())
+    api = {lvl: sorted({styles[c].api_wt for c in cases}) for lvl, cases in by_level.items()}
+
+    def blank() -> Line2D:
+        return Line2D([], [], linestyle="none")
+
+    entries: list[Line2D] = []
+    labels: list[str] = []
+    headers: list[int] = []
+    for lvl in order:
+        lo, hi = api[lvl][0], api[lvl][-1]
+        span = f"{lo:g} wt%" if lo == hi else f"{lo:g} to {hi:g} wt%"
+        headers.append(len(labels))
+        entries.append(blank())
+        labels.append(f"{pub.API_LEVEL_NAMES[lvl]}, {span}")
+        for case in by_level[lvl]:
+            entries.append(handles[case])
+            labels.append(styles[case].label)
+        for _ in range(height - len(by_level[lvl])):
+            entries.append(blank())
+            labels.append("")
+    legend = fig.legend(
+        entries, labels, loc="outside lower center", ncol=len(order),
+        title=CASE_LEGEND_TITLE, handlelength=3.2, columnspacing=2.4, borderaxespad=0.2,
+    )
+    for i in headers:
+        legend.get_texts()[i].set_fontweight("bold")
 
 
 def replicate_bands(
@@ -391,16 +479,19 @@ def render_all(analysis: Analysis, stress: StressTest, out_dir: Path) -> list[Fi
 
     # --- F08: raw profiles by grade (confirmatory) -----------------------
     grades = grades_by_viscosity(analysis)
-    fig, axes = pub.new_figure(pub.DOUBLE, 2.4, ncols=len(grades), sharey=True)
+    styles = case_styles(analysis)
+    fig, axes = pub.new_figure(pub.DOUBLE, 3.3, ncols=len(grades), sharey=True)
     axes = list(np.atleast_1d(axes))
+    handles: dict[int, Line2D] = {}
     for i, (ax, grade) in enumerate(zip(axes, grades, strict=False)):
-        st = pub.grade_style(grade, i)
-        for (_case, g), curve in sorted(analysis.observed_profiles.items()):
-            if g != grade:
+        for (case, g), curve in sorted(analysis.observed_profiles.items()):
+            if g != grade or case not in styles:
                 continue
+            st = styles[case].style
             ok = np.isfinite(curve)
-            ax.plot(analysis.time_grid[ok], curve[ok], color=st.colour, lw=0.8,
-                    linestyle=st.linestyle, alpha=0.9)
+            (line,) = ax.plot(analysis.time_grid[ok], curve[ok], color=st.colour, lw=1.0,
+                              linestyle=st.linestyle)
+            handles.setdefault(case, line)
         ax.axhline(config.CENSORING_PCT, color=pub.MUTED, ls=":", lw=0.7)
         pub.time_axis(ax)
         pub.percent_axis(ax)
@@ -408,11 +499,13 @@ def render_all(analysis: Analysis, stress: StressTest, out_dir: Path) -> list[Fi
         if i:
             ax.set_ylabel("")
     pub.label_panels(axes)
+    case_legend(fig, handles, styles)
     emit(
         "F08", "08_profiles_by_grade", 8,
         "Mean measured profile of every formulation, one panel per grade (ordered by "
-        f"viscosity), with the {config.CENSORING_PCT:.0f} % censoring threshold dotted. "
-        "Confirms the known direction and is a pipeline sanity check rather than a finding.",
+        "viscosity). Each case keeps the same colour and line style in every panel; line "
+        "style shows the API level and the legend gives each composition. Dotted grey: "
+        f"{config.CENSORING_PCT:.0f} % release.",
         fig,
     )
 

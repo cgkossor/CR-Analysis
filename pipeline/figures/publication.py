@@ -91,6 +91,16 @@ def grade_style(grade: str, index: int = 0) -> SeriesStyle:
     )
 
 
+#: Per-case series: colour tells cases apart, line style carries the API level
+#: (low / mid / high), so the second channel means something. Seven
+#: colour-blind-safe hues, reused only across API levels.
+CASE_COLOURS: tuple[str, ...] = (
+    "#0072B2", "#E69F00", "#009E73", "#CC79A7", "#D55E00", "#56B4E9", "#555555",
+)
+API_LEVEL_LINESTYLES: tuple[str, ...] = ("-", "--", ":")
+API_LEVEL_NAMES: tuple[str, ...] = ("Low API", "Mid API", "High API")
+
+
 def series_colour(index: int) -> str:
     """Colour for a series that is not a grade (components, models, ...)."""
     return OKABE_ITO[index % len(OKABE_ITO)]

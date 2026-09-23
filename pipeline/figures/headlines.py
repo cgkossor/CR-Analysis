@@ -9,8 +9,8 @@ diagnostics have run on real data.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -38,41 +38,42 @@ HEADLINE_RESPONSE = "t50"
 def _h1(analysis: Analysis, out: Path, banner: str | None) -> FigureRecord:
     grades = render.grades_by_viscosity(analysis)
     bands = render.replicate_bands(analysis)
-    pts = analysis.design_points
-    hpmc = {(int(r.case), str(r.grade)): float(r.hpmc_wt) for r in pts.itertuples()}
-    lo, hi = min(hpmc.values()), max(hpmc.values())
-    norm = mpl.colors.Normalize(vmin=lo, vmax=hi)
-    cmap = mpl.colormaps["cividis"]
+    styles = render.case_styles(analysis)
 
-    fig, axes = pub.new_figure(pub.DOUBLE, 2.5, ncols=len(grades), sharey=True)
+    fig, axes = pub.new_figure(pub.DOUBLE, 3.4, ncols=len(grades), sharey=True)
     axes = list(np.atleast_1d(axes))
     t = analysis.time_grid
+    handles: dict[int, Any] = {}
     for i, (ax, grade) in enumerate(zip(axes, grades, strict=False)):
-        keys = sorted((k for k in bands if k[1] == grade), key=lambda k: hpmc.get(k, 0.0))
-        for key in keys:
+        for key in sorted(k for k in bands if k[1] == grade):
+            case = key[0]
+            if case not in styles:
+                continue
+            st = styles[case].style
             mean, sd = bands[key]
             ok = np.isfinite(mean)
-            colour = cmap(norm(hpmc.get(key, lo)))
-            ax.fill_between(t[ok], (mean - sd)[ok], (mean + sd)[ok], color=colour,
-                            alpha=0.18, linewidth=0)
-            ax.plot(t[ok], mean[ok], color=colour, lw=0.9)
+            ax.fill_between(t[ok], (mean - sd)[ok], (mean + sd)[ok], color=st.colour,
+                            alpha=0.10, linewidth=0)
+            (line,) = ax.plot(t[ok], mean[ok], color=st.colour, lw=1.1,
+                              linestyle=st.linestyle)
+            handles.setdefault(case, line)
         ax.axhline(config.CENSORING_PCT, color=pub.MUTED, ls=":", lw=0.7)
         pub.time_axis(ax)
         pub.percent_axis(ax)
         pub.corner_note(ax, grade, "lower right")
         if i:
             ax.set_ylabel("")
-    bar = fig.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap), ax=axes,
-                       shrink=0.95, aspect=25, pad=0.02)
-    bar.set_label("HPMC (wt%)")
-    bar.ax.tick_params(which="both", direction="in")
     pub.label_panels(axes)
+    render.case_legend(fig, handles, styles)
     n_rep = int(analysis.quality.n_replicates)
     return FigureRecord(
         "H1", "headline", 1,
-        "Measured release profiles by HPMC grade (panels, ordered by viscosity). Lines are "
-        f"formulation means (n = {n_rep} replicates) coloured by HPMC content; shaded bands "
-        f"are ±1 SD across replicates. Dotted: {config.CENSORING_PCT:.0f} % release.",
+        "Measured release profiles by HPMC grade (panels, ordered by viscosity). Each "
+        "case keeps the same colour and line style in every panel; line style shows the "
+        "API level and the legend gives each composition. Lines are formulation means "
+        f"(n = {n_rep} replicates); shaded "
+        f"bands are ±1 SD across replicates. Dotted grey: {config.CENSORING_PCT:.0f} % "
+        "release.",
         pub.save(fig, out, HEADLINES[0], banner=banner),
     )
 
