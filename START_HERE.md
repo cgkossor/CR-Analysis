@@ -81,7 +81,7 @@ All three do the same thing. One command regenerates everything:
 | Output | What it is |
 |---|---|
 | `outputs/reports/` | six analysis reports, Markdown |
-| `outputs/figures/` | nine figures, SVG + PNG, with ranked captions |
+| `outputs/figures/` | all figures as 300 dpi PNG with captions; `headlines/` is the five-figure slide set |
 | `docs/guidelines.md` | written guidelines and limitations |
 | `dashboard/data.js` | the dashboard payload |
 

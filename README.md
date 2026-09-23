@@ -25,7 +25,7 @@ One command regenerates every artifact from the raw file:
 | `outputs/reports/surfaces.md` | AC4 surfaces, Box–Cox, sequential SS, residuals |
 | `outputs/reports/equivalence.md` | AC7 iso-release equivalence sets |
 | `outputs/reports/stress_test.md` | AC8 reduced-design evaluation and recommendation |
-| `outputs/figures/` | AC9 figures as SVG + PNG, with `captions.json` (ranked) |
+| `outputs/figures/` | AC9 journal-style figures (300 dpi PNG) with `captions.json` / `captions.md`; `headlines/` holds the H1–H5 slide set |
 | `docs/guidelines.md` | AC13 guidelines and limitations |
 | `dashboard/data.js` | generated payload for the offline dashboard |
 
@@ -148,7 +148,7 @@ pipeline/
   validation/  leave-one-formulation-out cross-validation
   equivalence/ f2 similarity and equivalence sets
   stress/      D-optimal reduced-design evaluation
-  figures/     matplotlib rendering with ranked captions
+  figures/     matplotlib rendering (publication.py style, headlines.py slide set)
   export/      data.js serialisation
 dashboard/     index.html, model.js, app.js, styles.css, data.js (generated)
 tests/

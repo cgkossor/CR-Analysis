@@ -260,7 +260,7 @@ Put your database .xlsx anywhere, then:
 That is the whole thing. It regenerates, from the raw file:
 
     outputs/reports/     six analysis reports
-    outputs/figures/     nine figures, SVG + PNG, with captions
+    outputs/figures/     figures (PNG) with captions; headlines/ = slide set
     docs/guidelines.md   the written guidelines and limitations
     dashboard/data.js    the dashboard payload
 
