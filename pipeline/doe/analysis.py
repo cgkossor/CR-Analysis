@@ -11,6 +11,7 @@ completeness.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -76,9 +77,18 @@ def _grade_levels(design_points: pd.DataFrame) -> list[tuple[str, float, float]]
 
 
 def run(
-    design_points: pd.DataFrame, replicates: pd.DataFrame, max_process_power: int
+    design_points: pd.DataFrame,
+    replicates: pd.DataFrame,
+    max_process_power: int,
+    responses: Sequence[ResponseData] | None = None,
 ) -> DoeAnalysis:
-    """Fit and characterise every named response."""
+    """Fit and characterise every named response.
+
+    ``responses`` defaults to the dissolution responses built by :func:`collect`.
+    Another study measured on the same design points (disintegration, say) passes
+    its own, aligned row for row with ``design_points``, and gets the identical
+    treatment.
+    """
     comp = design_points[["api_wt", "hpmc_wt", "lactose_wt"]].to_numpy(dtype=float) / 100.0
     proc = design_points["v_coded"].to_numpy(dtype=float)
     grades = _grade_levels(design_points)
@@ -93,7 +103,9 @@ def run(
     }
 
     out: list[ResponseAnalysis] = []
-    for data in collect(design_points, replicates):
+    if responses is None:
+        responses = collect(design_points, replicates)
+    for data in responses:
         mask = data.available
         if not data.usable:
             continue
