@@ -54,7 +54,8 @@ def _should_include(path: Path, root: Path) -> bool:
 
 #: Dashboard scripts in load order, exactly as index.html includes them.
 DASHBOARD_SCRIPTS = (
-    "data.js", "model.js", "doe.js", "formulator.js", "disintegration.js", "audit.js", "app.js",
+    "data.js", "model.js", "doe.js", "formulator.js",
+    "disintegration.js", "figures.js", "audit.js", "app.js",
 )
 
 

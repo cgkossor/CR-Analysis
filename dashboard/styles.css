@@ -154,3 +154,12 @@ abbr.tip:hover { color: var(--accent); text-decoration-color: var(--accent); }
 }
 #ad-tables summary { cursor: pointer; padding: 9px 13px; font-weight: 600; font-size: 13px; }
 #ad-tables .tablewrap { border: 0; border-radius: 0; max-height: 340px; }
+
+/* --- Figures ------------------------------------------------------------- */
+/* One figure per row, read top to bottom like a page. */
+.fg-grid { display: flex; flex-direction: column; gap: 22px; max-width: 980px; margin: 0 auto 28px; }
+.fg-card { margin: 0; border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 14px 16px; }
+.fg-card img { width: 100%; height: auto; display: block; }
+.fg-card figcaption { font-size: 13px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+.fg-card figcaption b { color: var(--ink); }
+.fg-missing { font-size: 12.5px; color: var(--muted); padding: 24px 12px; text-align: center; background: #f6f7f9; border-radius: 6px; }

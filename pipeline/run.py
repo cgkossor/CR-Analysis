@@ -22,7 +22,7 @@ from pipeline.design.report import render_markdown as design_markdown
 from pipeline.diagnostics import Diagnostics
 from pipeline.diagnostics import render_console as diag_console
 from pipeline.diagnostics import write as write_diagnostics
-from pipeline.export.data_js import build_payload, write_data_js
+from pipeline.export.data_js import build_payload, figure_gallery, write_data_js
 from pipeline.glossary import render_parameters_md
 from pipeline.io.load import load_database
 from pipeline.io.quality import render_markdown as quality_markdown
@@ -118,9 +118,12 @@ def _payload(
     source: str,
     disintegration: DisintegrationAnalysis | None = None,
     dt_file: str | None = None,
+    figures: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], AuditReport]:
     """The dashboard payload, carrying its own audit for the Admin tab."""
     payload = build_payload(analysis, stress, diagnostics, disintegration)
+    if figures:
+        payload["figures"] = figures
     audit = run_audit(
         source, analysis=analysis, stress=stress, payload=payload, disintegration=dt_file
     )
@@ -224,6 +227,13 @@ def _run(args: argparse.Namespace) -> int:
     diagnostics = write_diagnostics(analysis, stress, reports)
     print(f"Diagnostics -> {reports / 'diagnostics.md'} (+ .json)")
 
+    # Figures before the payload, so the dashboard can show them.
+    if not args.skip_figures:
+        from pipeline.figures.render import render_all
+
+        figures = render_all(analysis, stress, out_root / "figures")
+        print(f"Figures -> {len(figures)} rendered in {out_root / 'figures'}")
+
     # Optional section: runs only when the workbook carries a Disintegration
     # sheet. Before the payload, so the dashboard gets its tab.
     from pipeline.disintegration.__main__ import run_section as run_disintegration_section
@@ -240,17 +250,17 @@ def _run(args: argparse.Namespace) -> int:
         figures=not args.skip_figures, result=dt_result,
     ) if dt_result is not None else None
 
+    gallery = (
+        None if args.skip_figures
+        else figure_gallery(
+            out_root / "figures", Path(args.dashboard), disintegration=dt is not None
+        )
+    )
     payload, audit = _payload(
-        analysis, stress, diagnostics, args.input, dt, args.disintegration
+        analysis, stress, diagnostics, args.input, dt, args.disintegration, gallery
     )
     data_path = write_data_js(payload, Path(args.dashboard) / "data.js")
     print(f"Dashboard data -> {data_path}")
-
-    if not args.skip_figures:
-        from pipeline.figures.render import render_all
-
-        figures = render_all(analysis, stress, out_root / "figures")
-        print(f"Figures -> {len(figures)} rendered in {out_root / 'figures'}")
 
     if args.check_determinism:
         first = hashlib.sha256(data_path.read_bytes()).hexdigest()
@@ -269,6 +279,7 @@ def _run(args: argparse.Namespace) -> int:
                     _disintegration(repeat, args.input, args.disintegration)
                     if dt is not None else None,
                     args.disintegration,
+                    gallery,
                 )[0],
                 Path(tmp) / "data.js",
             )

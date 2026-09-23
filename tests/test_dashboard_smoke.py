@@ -35,7 +35,7 @@ const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
   { runScripts: "dangerously", virtualConsole: vc });
 const w = dom.window;
 for (const f of ["data.js", "model.js", "doe.js", "formulator.js",
-                  "disintegration.js", "audit.js", "app.js"]) {
+                  "disintegration.js", "figures.js", "audit.js", "app.js"]) {
   try { w.eval(fs.readFileSync(path.join(dash, f), "utf8")); }
   catch (e) { errors.push(f + " threw: " + e.message); }
 }
@@ -67,6 +67,7 @@ process.stdout.write(JSON.stringify({
 
 EXPECTED_TABS = {
     "explorer",
+    "figures",
     "metrics",
     "design",
     "doe",
@@ -122,8 +123,12 @@ def test_page_boots_without_errors(rendered: dict) -> None:
 def _expected_tabs() -> set[str]:
     """Disintegration is optional: its tab appears only when data.js carries it."""
     data = (DASHBOARD / "data.js").read_text(encoding="utf-8")
-    has_dt = '"disintegration": {' in data
-    return EXPECTED_TABS if has_dt else EXPECTED_TABS - {"disintegration"}
+    expected = set(EXPECTED_TABS)
+    if '"disintegration": {' not in data:
+        expected.discard("disintegration")
+    if '"figures": [' not in data:
+        expected.discard("figures")
+    return expected
 
 
 def test_every_tab_renders_content(rendered: dict) -> None:
@@ -208,7 +213,7 @@ const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
   { runScripts: "dangerously", virtualConsole: vc });
 const w = dom.window;
 for (const f of ["data.js", "model.js", "doe.js", "formulator.js",
-                  "disintegration.js", "audit.js", "app.js"]) {
+                  "disintegration.js", "figures.js", "audit.js", "app.js"]) {
   w.eval(fs.readFileSync(path.join(dash, f), "utf8"));
 }
 w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
@@ -338,7 +343,7 @@ def test_disintegration_tab_renders_when_the_sheet_exists(tmp_path: Path) -> Non
     assert result.returncode == 0, result.stderr[:2000]
     out = json.loads(result.stdout)
     assert out["errors"] == [], out["errors"]
-    assert set(out["tabs"]) == EXPECTED_TABS
+    assert set(out["tabs"]) == EXPECTED_TABS - {"figures"}
     tab = out["tabs"]["disintegration"]
     assert tab["chars"] > 400 and tab["svg"] >= 1
     assert any(r["key"] == "dt_h" for r in payload["doe"]["responses"])

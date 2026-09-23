@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -720,6 +721,45 @@ def build_payload(
         }
 
     return payload
+
+
+#: Figure folders shown in the dashboard's Figures tab, in display order.
+GALLERY_GROUPS: tuple[tuple[str, str], ...] = (
+    ("headlines", "Headline figures"),
+    ("", "Dissolution figures"),
+    ("disintegration", "Disintegration figures"),
+)
+
+
+def figure_gallery(
+    figures_dir: Path, dashboard_dir: Path, *, disintegration: bool = False
+) -> list[dict[str, Any]]:
+    """The rendered figures, read from each folder's ``captions.json``.
+
+    Paths are relative to the dashboard, so the page shows the PNGs straight
+    from ``outputs/figures`` when opened from disk. The disintegration folder
+    is listed only when this run produced that section, so figures left over
+    from an earlier run are never shown as current.
+    """
+    items: list[dict[str, Any]] = []
+    for sub, group in GALLERY_GROUPS:
+        if sub == "disintegration" and not disintegration:
+            continue
+        folder = figures_dir / sub if sub else figures_dir
+        manifest = folder / "captions.json"
+        if not manifest.exists():
+            continue
+        for entry in json.loads(manifest.read_text(encoding="utf-8")):
+            png = folder / str(entry["png"])
+            if not png.exists():
+                continue
+            items.append({
+                "group": group,
+                "id": str(entry["id"]),
+                "caption": str(entry["caption"]),
+                "src": os.path.relpath(png, dashboard_dir).replace(os.sep, "/"),
+            })
+    return items
 
 
 def write_data_js(payload: dict[str, Any], path: str | Path) -> Path:

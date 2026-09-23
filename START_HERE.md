@@ -88,6 +88,11 @@ All three do the same thing. One command regenerates everything:
 Then open `dashboard/index.html` — double-click it in the file explorer, or run
 **Tasks: Run Task → 3. Open the dashboard**.
 
+The **Figures** tab shows every figure from that run with its caption, read
+straight from `outputs/figures`. It appears unless the run used
+`--skip-figures`. Keep `dashboard/` and `outputs/` side by side, as they are
+in the project folder, or the images will not be found.
+
 **Read `outputs/reports/data_quality.md` first.** It is written before anything
 is modelled and tells you what was found, what is missing, and every anomaly
 detected. If the database is not what you expected, that report says so.

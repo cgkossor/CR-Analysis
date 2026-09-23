@@ -387,6 +387,7 @@
   /* ------------------------------------------------------------ tabs */
   var TABS = [
     ["explorer", "Database Explorer"],
+    ["figures", "Figures"],
     ["metrics", "Analysis & Metrics"],
     ["design", "Design Diagnostics"],
     ["doe", "DoE Analysis"],
@@ -404,7 +405,9 @@
     var nav = $("tabs");
     /* Optional sections get a tab only when the workbook supplied their data. */
     TABS.filter(function (t) {
-      return t[0] !== "disintegration" || D.disintegration;
+      if (t[0] === "disintegration") return !!D.disintegration;
+      if (t[0] === "figures") return !!(D.figures && D.figures.length);
+      return true;
     }).forEach(function (t, i) {
       var b = el("button", { role: "tab", "data-target": t[0], "aria-selected": i === 0 ? "true" : "false" }, t[1]);
       b.addEventListener("click", function () { showTab(t[0]); });
@@ -1301,6 +1304,9 @@
     track("doe", function () { if (window.CRDoe) window.CRDoe.render(D, api); });
     track("formulator", function () {
       if (window.CRFormulator) window.CRFormulator.render(D, api);
+    });
+    track("figures", function () {
+      if (window.CRFigures) window.CRFigures.render(D, api);
     });
     track("disintegration", function () {
       if (window.CRDisintegration) window.CRDisintegration.render(D, api);
