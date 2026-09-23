@@ -52,6 +52,12 @@ def _should_include(path: Path, root: Path) -> bool:
     return path.is_file()
 
 
+#: Dashboard scripts in load order, exactly as index.html includes them.
+DASHBOARD_SCRIPTS = (
+    "data.js", "model.js", "doe.js", "formulator.js", "disintegration.js", "audit.js", "app.js",
+)
+
+
 def build_standalone_html(dashboard: Path, out: Path) -> Path:
     """Inline styles, data, model and app into one self-contained HTML file."""
     html = (dashboard / "index.html").read_text(encoding="utf-8")
@@ -63,7 +69,7 @@ def build_standalone_html(dashboard: Path, out: Path) -> Path:
     )
 
     scripts = ""
-    for name in ("data.js", "model.js", "doe.js", "formulator.js", "audit.js", "app.js"):
+    for name in DASHBOARD_SCRIPTS:
         source = dashboard / name
         if not source.exists():
             raise FileNotFoundError(
@@ -75,7 +81,7 @@ def build_standalone_html(dashboard: Path, out: Path) -> Path:
         body = body.replace("</script>", "<\\/script>")
         scripts += f"<script>\n{body}\n</script>\n"
 
-    for name in ("data.js", "model.js", "doe.js", "formulator.js", "audit.js", "app.js"):
+    for name in DASHBOARD_SCRIPTS:
         html = html.replace(f'<script src="{name}"></script>\n', "")
         html = html.replace(f'<script src="{name}"></script>', "")
     html = html.replace("</body>", scripts + "</body>")

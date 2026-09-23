@@ -34,7 +34,8 @@ vc.on("error", (...a) => errors.push("console.error: " + a.join(" ")));
 const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
   { runScripts: "dangerously", virtualConsole: vc });
 const w = dom.window;
-for (const f of ["data.js", "model.js", "doe.js", "formulator.js", "audit.js", "app.js"]) {
+for (const f of ["data.js", "model.js", "doe.js", "formulator.js",
+                  "disintegration.js", "audit.js", "app.js"]) {
   try { w.eval(fs.readFileSync(path.join(dash, f), "utf8")); }
   catch (e) { errors.push(f + " threw: " + e.message); }
 }
@@ -74,6 +75,7 @@ EXPECTED_TABS = {
     "stress",
     "diagnostics",
     "formulator",
+    "disintegration",
     "guidelines",
     "admin",
 }
@@ -117,9 +119,17 @@ def test_page_boots_without_errors(rendered: dict) -> None:
     assert rendered["errors"] == [], f"dashboard raised: {rendered['errors']}"
 
 
+def _expected_tabs() -> set[str]:
+    """Disintegration is optional: its tab appears only when data.js carries it."""
+    data = (DASHBOARD / "data.js").read_text(encoding="utf-8")
+    has_dt = '"disintegration": {' in data
+    return EXPECTED_TABS if has_dt else EXPECTED_TABS - {"disintegration"}
+
+
 def test_every_tab_renders_content(rendered: dict) -> None:
-    assert rendered["nTabs"] == len(EXPECTED_TABS)
-    assert set(rendered["tabs"]) == EXPECTED_TABS
+    expected = _expected_tabs()
+    assert rendered["nTabs"] == len(expected)
+    assert set(rendered["tabs"]) == expected
     for name, info in rendered["tabs"].items():
         # "Handles the single-API case without empty panels" is an explicit
         # acceptance criterion, so an empty panel is a failure, not a nuance.
@@ -197,7 +207,8 @@ vc.on("error", (...a) => errors.push("console.error: " + a.join(" ")));
 const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
   { runScripts: "dangerously", virtualConsole: vc });
 const w = dom.window;
-for (const f of ["data.js", "model.js", "doe.js", "formulator.js", "audit.js", "app.js"]) {
+for (const f of ["data.js", "model.js", "doe.js", "formulator.js",
+                  "disintegration.js", "audit.js", "app.js"]) {
   w.eval(fs.readFileSync(path.join(dash, f), "utf8"));
 }
 w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
@@ -289,3 +300,46 @@ def test_equivalence_is_framed_as_substitution(rendered: dict) -> None:
     html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
     assert 'id="eq-guidance"' in html, "no substitution guidance"
     assert 'id="eq-map"' in html, "no design-space map of where freedom exists"
+
+
+def test_disintegration_tab_renders_when_the_sheet_exists(tmp_path: Path) -> None:
+    """With a Disintegration sheet the tab appears, draws, and feeds the DoE tab."""
+    if NODE is None or not _have_jsdom():
+        pytest.skip("Node.js with jsdom is needed to render the dashboard")
+    workbooks = sorted(ROOT.glob("*.xlsx"))
+    if not workbooks:
+        pytest.skip("no database workbook present")
+
+    from pipeline.analysis import run_analysis
+    from pipeline.diagnostics import collect
+    from pipeline.disintegration.synthetic import generate
+    from pipeline.export.data_js import write_data_js
+    from pipeline.io.load import load_database
+    from pipeline.run import _disintegration, _payload, _stress
+
+    source = generate(workbooks[0], tmp_path / "with_dt.xlsx")
+    analysis = run_analysis(load_database(source))
+    stress = _stress(analysis)
+    dt = _disintegration(analysis, str(source))
+    assert dt is not None
+    payload, _ = _payload(analysis, stress, collect(analysis, stress), str(source), dt)
+
+    dash = tmp_path / "dashboard"
+    dash.mkdir()
+    for f in DASHBOARD.iterdir():
+        if f.suffix in (".html", ".js", ".css") and f.name != "data.js":
+            shutil.copy(f, dash / f.name)
+    write_data_js(payload, dash / "data.js")
+
+    result = subprocess.run(
+        [NODE, "-e", _SMOKE, str(dash)],
+        capture_output=True, text=True, timeout=300, check=False, cwd=ROOT,
+    )
+    assert result.returncode == 0, result.stderr[:2000]
+    out = json.loads(result.stdout)
+    assert out["errors"] == [], out["errors"]
+    assert set(out["tabs"]) == EXPECTED_TABS
+    tab = out["tabs"]["disintegration"]
+    assert tab["chars"] > 400 and tab["svg"] >= 1
+    assert any(r["key"] == "dt_h" for r in payload["doe"]["responses"])
+    assert "disintegration_in_doe_tab=1" in out["adminText"]

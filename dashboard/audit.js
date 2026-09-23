@@ -177,6 +177,22 @@
       r.add("stress_recommended_points", st.recommended_points.length);
     });
 
+    r.probe(function () {
+      var X = D.disintegration;
+      r.add("disintegration_present", !!X);
+      if (!X) return;
+      r.add("disintegration_points", X.points.length);
+      r.add("disintegration_points_no_value", X.points.filter(function (p) {
+        return !p.censored && !isNum(p.dt_h);
+      }).length);
+      r.add("disintegration_points_no_td", X.points.filter(function (p) {
+        return !isNum(p.td_h);
+      }).length);
+      var keys = {};
+      ((D.doe && D.doe.responses) || []).forEach(function (x) { keys[x.key] = 1; });
+      r.add("disintegration_in_doe_tab", X.doe_keys.every(function (k) { return keys[k]; }));
+    });
+
     r.add("probe_errors", r.probeErrors);
     return r;
   }

@@ -395,13 +395,17 @@
     ["stress", "Design Stress Test"],
     ["diagnostics", "Diagnostics"],
     ["formulator", "Formulator Tool"],
+    ["disintegration", "Disintegration"],
     ["guidelines", "Guidelines & Limitations"],
     ["admin", "Admin / Audit"]
   ];
 
   function buildTabs() {
     var nav = $("tabs");
-    TABS.forEach(function (t, i) {
+    /* Optional sections get a tab only when the workbook supplied their data. */
+    TABS.filter(function (t) {
+      return t[0] !== "disintegration" || D.disintegration;
+    }).forEach(function (t, i) {
       var b = el("button", { role: "tab", "data-target": t[0], "aria-selected": i === 0 ? "true" : "false" }, t[1]);
       b.addEventListener("click", function () { showTab(t[0]); });
       nav.appendChild(b);
@@ -1297,6 +1301,9 @@
     track("doe", function () { if (window.CRDoe) window.CRDoe.render(D, api); });
     track("formulator", function () {
       if (window.CRFormulator) window.CRFormulator.render(D, api);
+    });
+    track("disintegration", function () {
+      if (window.CRDisintegration) window.CRDisintegration.render(D, api);
     });
 
     /* Last, so it can see how every other tab fared. */
