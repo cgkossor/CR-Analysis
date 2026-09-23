@@ -141,7 +141,15 @@ def run_stress_test(
                 10.0 ** pred["log10_td"][i],
                 pred["weibull_beta"][i],
             )
-            errors.append(float(np.sqrt(np.mean((curve - observed) ** 2))))
+            # Compare only where the observed curve exists. A profile with no
+            # value at some grid points (outside its measured range, or across a
+            # gap) would otherwise make this NaN, then the design-wide RMSE NaN,
+            # and every candidate size would fail the tolerance test with no
+            # reason given.
+            mask = np.isfinite(observed) & np.isfinite(curve)
+            if not mask.any():
+                continue
+            errors.append(float(np.sqrt(np.mean((curve[mask] - observed[mask]) ** 2))))
         if not errors:
             return float("nan"), float("nan")
         return float(np.sqrt(np.mean(np.square(errors)))), float(np.max(errors))
@@ -234,6 +242,12 @@ def run_stress_test(
             f"regardless of apparent accuracy: with {p} model terms they are saturated "
             "or nearly so, cannot support cross-validation, and therefore cannot carry "
             "the error estimate every prediction must be reported with."
+        )
+    elif not np.isfinite(full_rmse):
+        rationale = (
+            "The full design's profile prediction error could not be computed: no "
+            "measured profile overlaps the comparison grid. Without that reference "
+            "no reduced design can be judged against it, so none is recommended."
         )
     else:
         rationale = (
