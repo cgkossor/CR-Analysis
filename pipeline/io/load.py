@@ -183,7 +183,7 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
             schema.api_col: "api",
             schema.case_col: "case",
             schema.grade_col: "grade",
-            schema.time_col: "time_h",
+            (rep.time or schema.time_col): "time_h",
             rep.conc: "conc_ug_ml",
             schema.component_cols["api"]: "api_wt",
             schema.component_cols["hpmc"]: "hpmc_wt",

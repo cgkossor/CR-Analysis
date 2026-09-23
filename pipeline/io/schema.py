@@ -60,6 +60,7 @@ SCHEMA_ERROR_CODES: Final[dict[int, str]] = {
     26: "mass unit not determinable",
     27: "mass units inconsistent",
     28: "replicate has concentration but no mass column",
+    29: "per-replicate time columns carry inconsistent units",
     30: "no tablet-mass columns",
     31: "non-positive dose",
     32: "grade without nominal viscosity",
@@ -98,6 +99,11 @@ _DATE_RE = re.compile(r"^date[_\s]*(\d+)", re.IGNORECASE)
 _TIME_RE = re.compile(
     r"^(minutes|minute|min|hours|hour|elapsed|time|hr|h)(?![a-z])", re.IGNORECASE
 )
+#: A time header carrying a replicate index, e.g. ``Min_2``: the replicate has its
+#: own clock, as an in-situ probe per vessel does.
+_TIME_IDX_RE = re.compile(
+    r"^(minutes|minute|min|hours|hour|elapsed|time|hr|h)[_\s]*(\d+)(?!\d)", re.IGNORECASE
+)
 _COMP_RE = re.compile(r"^(api|hpmc|lactose)\s*\[?\s*(wt\s*%|%|w/w)", re.IGNORECASE)
 
 
@@ -126,6 +132,8 @@ class ReplicateColumns:
     conc: str
     mass: str | None
     date: str | None
+    time: str | None = None
+    """This replicate's own elapsed-time column, or ``None`` to use the shared one."""
 
 
 @dataclass(frozen=True)
@@ -262,12 +270,30 @@ def detect_schema(frame: pd.DataFrame) -> DissolutionSchema:
         assert resolved_mass is not None
         mass_factor = resolved_mass
 
+    # One clock per replicate when every replicate has its own time column
+    # (Min_1, Min_2, ...). Pairing them all with the first would time replicates
+    # 2..N by replicate 1's clock and shift every one of their readings.
+    time_by_idx = {
+        int(m.group(2)): c for c in time_candidates
+        if (m := _TIME_IDX_RE.match(_norm(c))) is not None
+    }
+    per_rep_time = set(conc_by_idx) <= set(time_by_idx)
+    if per_rep_time:
+        factors = {c: _extract_unit(c, _TIME_UNITS) for c in time_by_idx.values()}
+        if len(set(factors.values())) > 1:
+            raise SchemaError(
+                f"Per-replicate time columns carry inconsistent or missing units: "
+                f"{factors}. All replicates must report elapsed time in one unit.",
+                29,
+            )
+
     replicates = tuple(
         ReplicateColumns(
             index=idx,
             conc=conc_by_idx[idx],
             mass=mass_by_idx.get(idx),
             date=date_by_idx.get(idx),
+            time=time_by_idx[idx] if per_rep_time else None,
         )
         for idx in sorted(conc_by_idx)
     )
