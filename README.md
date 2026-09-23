@@ -156,6 +156,19 @@ tests/
 
 ## Things worth knowing before reading the numbers
 
+* **The analysis window is 0–24 h** (`ANALYSIS_WINDOW_H` in
+  `pipeline/config.py`). Readings from runs extended past it for diagnostics
+  are dropped at load. The one reading just after 24 h is kept, so that the
+  24 h value can be interpolated.
+* **Each replicate keeps its own clock.** When the workbook has a time column
+  per replicate (`Min_1`, `Min_2`, …), each is paired with its own `conc_N`.
+* **Densely logged probe data are resampled for comparison only.** When the
+  timestamps are too many to reconcile into a schedule, each replicate is
+  interpolated onto `NOMINAL_SCHEDULE_H`, then averaged. Interpolation happens
+  only between readings, never across a gap wider than `MAX_INTERP_GAP_H`, and
+  never beyond the measured range. Metrics and kinetic fits still use every
+  measured point; the resampled curves feed only the mean profiles, f2,
+  cross-validation and the stress test.
 * **The components sum to 100 wt% exactly**, so this is a mixture: the
   composition matrix has rank 2 and the three components cannot be varied
   independently. A polynomial with an intercept *and* all three components is
