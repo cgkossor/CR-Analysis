@@ -4,42 +4,27 @@ half-normal.
 Plots lead, tables support. These answer the questions a formulator brings --
 which lever matters, where the sweet spot sits, whether the levers interact --
 in a form readable at a glance rather than decoded from a coefficient table.
+
+Each figure is split into a ``draw_*`` function that paints onto axes it is
+given and a thin wrapper that makes and saves the standalone figure, so the
+headline composites reuse exactly the same drawing code.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-import matplotlib
-import numpy as np
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib import cm  # noqa: F401
+import numpy as np
+from matplotlib import ticker
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
 from pipeline.doe.analysis import ResponseAnalysis
-
-GRADE_COLOURS = {"K100LV": "#3b7dd8", "K4M": "#d9822b", "K100M": "#8e5bb5"}
-_FALLBACK = ["#3b7dd8", "#d9822b", "#8e5bb5", "#3aa17e", "#c0504d"]
-
-
-def _colour(grade: str, i: int = 0) -> str:
-    return GRADE_COLOURS.get(grade, _FALLBACK[i % len(_FALLBACK)])
-
-
-def _save(fig: plt.Figure, out: Path, name: str, banner: str | None) -> None:
-    if banner:
-        # Above the title, not below the axes: with constrained layout the bottom
-        # of the figure belongs to the x-labels and the banner lands on top of them.
-        # bbox_inches="tight" pulls anything past y=1 back into the saved image.
-        fig.text(
-            0.5, 1.02, banner, ha="center", va="bottom",
-            fontsize=7.5, color="#a03030", weight="bold",
-        )
-    fig.savefig(out / f"{name}.svg", format="svg", bbox_inches="tight")
-    fig.savefig(out / f"{name}.png", format="png", bbox_inches="tight")
-    plt.close(fig)
+from pipeline.figures import publication as pub
+from pipeline.figures.publication import FigureRecord
 
 
 def _z_array(grid_rows: tuple[tuple[float | None, ...], ...]) -> np.ndarray:
@@ -48,182 +33,222 @@ def _z_array(grid_rows: tuple[tuple[float | None, ...], ...]) -> np.ndarray:
     )
 
 
-def contour_panel(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
-    """One contour per grade, on a shared colour scale.
+def _response_label(ra: ResponseAnalysis) -> str:
+    spec = ra.response.spec
+    return f"{spec.label} ({spec.units})" if spec.units else spec.label
+
+
+#: How many of the largest significant effects the half-normal plot names.
+HALF_NORMAL_LABELS = 6
+
+
+# --- drawing primitives ------------------------------------------------------
+
+
+def draw_contours(fig: Figure, axes: Sequence[Axes], ra: ResponseAnalysis) -> None:
+    """One contour per grade on a shared colour scale, with one colourbar.
 
     The shared scale is deliberate. Scaling each panel to its own range makes
     every grade look equally variable and hides the thing worth seeing: that one
     grade spans far more of the response than another.
     """
-    grids = ra.grids
     lo, hi = ra.scale
-    # constrained layout, not the global autolayout: tight_layout and colorbars
-    # fight each other and the bar ends up drawn over the last panel.
-    fig, axes = plt.subplots(
-        1, len(grids), figsize=(4.6 * len(grids), 3.9), sharey=True,
-        layout="constrained",
+    levels: Any = (
+        ticker.MaxNLocator(nbins=10).tick_values(lo, hi)
+        if np.isfinite(lo) and hi > lo else 10
     )
-    axes = np.atleast_1d(axes)
-    levels = np.linspace(lo, hi, 12) if np.isfinite(lo) and hi > lo else 10
-
     mesh = None
-    for ax, g in zip(axes, grids, strict=False):
+    for ax, g in zip(axes, ra.grids, strict=False):
         z = _z_array(g.z)
         mesh = ax.contourf(g.api_axis, g.hpmc_axis, z, levels=levels, cmap="viridis")
         lines = ax.contour(
             g.api_axis, g.hpmc_axis, z, levels=levels,
-            colors="white", linewidths=0.5, alpha=0.6,
+            colors="white", linewidths=0.4, alpha=0.7,
         )
-        ax.clabel(lines, inline=True, fontsize=6, fmt="%.0f")
+        ax.clabel(lines, inline=True, fontsize=5.5, fmt=lambda v: f"{v:g}")
         ax.scatter(
             [p[0] for p in g.design_points], [p[1] for p in g.design_points],
-            s=26, c="white", edgecolor="#1c2330", linewidth=0.8, zorder=5,
+            s=14, facecolor="white", edgecolor="black", linewidth=0.5, zorder=5,
+            clip_on=False,
         )
-        ax.set_title(f"{g.grade}  ({g.viscosity_cp:,.0f} cP)", fontsize=10)
+        pub.header_note(ax, f"{g.grade} ({g.viscosity_cp:,.0f} cP)")
         ax.set_xlabel("API (wt%)")
+        pub.auto_minor(ax)
     axes[0].set_ylabel("HPMC (wt%)")
+    for ax in axes[1:]:
+        ax.tick_params(labelleft=False)
     if mesh is not None:
-        bar = fig.colorbar(mesh, ax=axes.tolist(), shrink=0.9, pad=0.02)
-        bar.set_label(
-            f"{ra.response.spec.label} ({ra.response.spec.units})", fontsize=9
+        bar = fig.colorbar(mesh, ax=list(axes), shrink=0.95, pad=0.02, aspect=25)
+        bar.set_label(_response_label(ra))
+        bar.ax.tick_params(which="both", direction="in")
+
+
+def draw_pareto(ax: Axes, ra: ResponseAnalysis) -> None:
+    """Standardised effects against the 5 % and Bonferroni lines."""
+    eff = ra.ranking.effects
+    names = [e.term for e in eff][::-1]
+    vals = [e.abs_t for e in eff][::-1]
+    colours = [pub.OKABE_ITO[0] if e.significant else "#C8C8C8" for e in eff][::-1]
+    ax.barh(names, vals, color=colours, height=0.65, edgecolor="black", linewidth=0.4)
+    if np.isfinite(ra.ranking.t_critical):
+        ax.axvline(
+            ra.ranking.t_critical, color=pub.HIGHLIGHT, ls="--", lw=0.8,
+            label=f"p = 0.05 (|t| = {ra.ranking.t_critical:.2f})",
         )
-    fig.suptitle(
-        f"{ra.response.spec.label} — lactose is the balance to 100 wt%",
-        fontsize=11,
+    if np.isfinite(ra.ranking.bonferroni_t):
+        ax.axvline(
+            ra.ranking.bonferroni_t, color=pub.INK, ls=":", lw=0.9,
+            label=f"Bonferroni (|t| = {ra.ranking.bonferroni_t:.2f})",
+        )
+    ax.set_xlim(0, max([*vals, ra.ranking.bonferroni_t if np.isfinite(ra.ranking.bonferroni_t)
+                        else 0.0]) * 1.08)
+    ax.set_ylim(-0.6, len(names) - 0.4)
+    ax.set_xlabel("|Standardised effect|")
+    pub.categorical(ax, "y")
+    ax.legend(loc="lower right")
+
+
+def draw_interaction(ax: Axes, ra: ResponseAnalysis) -> None:
+    """Non-parallel lines are the interaction, read straight off the picture."""
+    prof = ra.interactions[0]
+    n = len(prof.x_values)
+    for i, (label, ys) in enumerate(prof.series):
+        st = pub.grade_style(label, i)
+        ax.plot(
+            prof.x_values, ys, **st.line(), markevery=max(1, n // 6),
+            markerfacecolor="white", markeredgewidth=0.8, label=label,
+        )
+    ax.set_xlabel(f"{prof.factor.upper()} (wt%)")
+    ax.set_ylabel(_response_label(ra))
+    pub.auto_minor(ax)
+    ax.legend(title="Grade")
+
+
+def draw_traces(ax: Axes, ra: ResponseAnalysis) -> None:
+    """Cox response traces: the mixture analogue of a main-effects plot."""
+    styles = ("-", "--", "-.", ":")
+    for i, tr in enumerate(ra.traces):
+        ax.plot(
+            tr.x_values, tr.y_values, color=pub.series_colour(i + 3),
+            linestyle=styles[i % len(styles)], label=tr.label.replace("Hpmc", "HPMC"),
+        )
+    ax.set_xlabel("Component (wt%)")
+    ax.set_ylabel(_response_label(ra))
+    pub.auto_minor(ax)
+    ax.legend()
+
+
+def draw_half_normal(ax: Axes, ra: ResponseAnalysis) -> None:
+    """Inert terms fall on a line through the origin; real ones leave it."""
+    eff = sorted(ra.ranking.effects, key=lambda e: e.abs_t)
+    quantiles = list(ra.ranking.half_normal_quantiles)[::-1]
+    n = min(len(eff), len(quantiles))
+    sig = [i for i in range(n) if eff[i].significant]
+    inert_idx = [i for i in range(n) if not eff[i].significant]
+
+    ax.scatter(
+        [quantiles[i] for i in inert_idx], [eff[i].abs_t for i in inert_idx],
+        s=14, facecolor="white", edgecolor=pub.INK, linewidth=0.7, zorder=3,
+        label="not significant",
     )
-    name = f"doe_contour_{ra.response.spec.key}"
-    _save(fig, out, name, banner)
-    return name
+    ax.scatter(
+        [quantiles[i] for i in sig], [eff[i].abs_t for i in sig],
+        s=16, color=pub.HIGHLIGHT, marker="s", zorder=3, label="significant (p < 0.05)",
+    )
+    # Only the largest effects are named; below them the labels would pile up.
+    # Their vertical positions are spread so neighbours never overprint.
+    named = sorted(sig, key=lambda i: eff[i].abs_t)[-HALF_NORMAL_LABELS:]
+    top = max((e.abs_t for e in eff[:n]), default=1.0) * 1.15
+    ys = pub.spread_labels([eff[i].abs_t for i in named], 0.055 * top)
+    for i, ly in zip(named, ys, strict=True):
+        ax.annotate(
+            eff[i].term, (quantiles[i], eff[i].abs_t), xytext=(quantiles[i] + 0.06, ly),
+            fontsize=6, va="center",
+            arrowprops={"arrowstyle": "-", "color": pub.MUTED, "lw": 0.3,
+                        "shrinkA": 0, "shrinkB": 2},
+        )
+    if len(inert_idx) >= 2:
+        qx = np.array([quantiles[i] for i in inert_idx])
+        qy = np.array([eff[i].abs_t for i in inert_idx])
+        denominator = float(np.sum(qx**2))
+        slope = float(np.sum(qx * qy) / denominator) if denominator > 0 else 0.0
+        line = np.linspace(0.0, max(quantiles[:n]) if n else 1.0, 20)
+        ax.plot(line, slope * line, color=pub.MUTED, ls="--", lw=0.8,
+                label="fit through inert terms")
+    ax.set_xlim(0, (max(quantiles[:n]) if n else 1.0) * 1.35)
+    ax.set_ylim(0, top)
+    ax.set_xlabel("Half-normal quantile")
+    ax.set_ylabel("|Standardised effect|")
+    pub.auto_minor(ax)
+    ax.legend(loc="upper left")
+
+
+# --- standalone figures ------------------------------------------------------
+
+
+def contour_panel(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
+    n = len(ra.grids)
+    fig, axes = pub.new_figure(pub.DOUBLE, 2.5, ncols=n, sharey=True)
+    axes = list(np.atleast_1d(axes))
+    draw_contours(fig, axes, ra)
+    pub.label_panels(axes)
+    return pub.save(fig, out, f"doe_contour_{ra.response.spec.key}", banner=banner)
 
 
 def surface_3d(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
     """The same surface in relief, where curvature is easier to see."""
-    grids = ra.grids
+    pub.apply_style()
     lo, hi = ra.scale
-    fig = plt.figure(figsize=(4.4 * len(grids), 3.8), layout="constrained")
-    for i, g in enumerate(grids, start=1):
-        # mypy sees the 2-D Axes signature; a 3-D projection adds
-        # plot_surface and set_zlabel at runtime.
-        ax: Any = fig.add_subplot(1, len(grids), i, projection="3d")
+    n = len(ra.grids)
+    fig = plt.figure(figsize=(pub.DOUBLE, 2.6), layout="constrained")
+    axes = []
+    for i, g in enumerate(ra.grids, start=1):
+        ax: Any = fig.add_subplot(1, n, i, projection="3d")
         z = _z_array(g.z)
         mesh_a, mesh_h = np.meshgrid(g.api_axis, g.hpmc_axis, indexing="xy")
         ax.plot_surface(
             mesh_a, mesh_h, z, cmap="viridis", vmin=lo, vmax=hi,
             linewidth=0, antialiased=True, rstride=2, cstride=2,
         )
-        ax.set_xlabel("API (wt%)", fontsize=8)
-        ax.set_ylabel("HPMC (wt%)", fontsize=8)
-        ax.set_zlabel(ra.response.spec.units, fontsize=8)
-        ax.set_title(g.grade, fontsize=10)
-        ax.tick_params(labelsize=7)
-    fig.suptitle(f"{ra.response.spec.label} — fitted surface", fontsize=11)
-    name = f"doe_surface3d_{ra.response.spec.key}"
-    _save(fig, out, name, banner)
-    return name
+        ax.set_xlabel("API (wt%)", labelpad=-2)
+        ax.set_ylabel("HPMC (wt%)", labelpad=-2)
+        ax.set_zlabel(_response_label(ra), labelpad=-1)
+        ax.tick_params(labelsize=6, pad=-1)
+        for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+            axis.set_minor_locator(ticker.NullLocator())
+            axis.set_major_locator(ticker.MaxNLocator(5))
+            axis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+            axis._axinfo["grid"]["linewidth"] = 0.3
+            axis._axinfo["grid"]["color"] = (0.8, 0.8, 0.8, 1.0)
+        pub.corner_note(ax, g.grade, "upper right")
+        axes.append(ax)
+    pub.label_panels(axes)
+    return pub.save(fig, out, f"doe_surface3d_{ra.response.spec.key}", banner=banner)
 
 
 def traces(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
-    """Cox response traces: the mixture analogue of a main-effects plot."""
-    fig, ax = plt.subplots(figsize=(5.4, 3.7))
-    for i, tr in enumerate(ra.traces):
-        ax.plot(
-            tr.x_values, tr.y_values, lw=2,
-            color=_FALLBACK[i % len(_FALLBACK)], label=tr.label,
-        )
-    ax.set_xlabel("component (wt%)")
-    ax.set_ylabel(f"{ra.response.spec.label} ({ra.response.spec.units})")
-    ax.set_title("Cox response traces")
-    ax.legend(fontsize=8, frameon=False)
-    ax.grid(alpha=0.25)
-    name = f"doe_traces_{ra.response.spec.key}"
-    _save(fig, out, name, banner)
-    return name
+    fig, ax = pub.new_figure(pub.SINGLE)
+    draw_traces(ax, ra)
+    return pub.save(fig, out, f"doe_traces_{ra.response.spec.key}", banner=banner)
 
 
 def interaction(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
-    """Non-parallel lines are the interaction, read straight off the picture."""
-    prof = ra.interactions[0]
-    fig, ax = plt.subplots(figsize=(5.4, 3.7))
-    for i, (label, ys) in enumerate(prof.series):
-        ax.plot(prof.x_values, ys, lw=2, color=_colour(label, i), label=label)
-    ax.set_xlabel(f"{prof.factor.upper()} (wt%)")
-    ax.set_ylabel(f"{ra.response.spec.label} ({ra.response.spec.units})")
-    suffix = "" if prof.parallel else " — not parallel"
-    ax.set_title(f"{prof.label} interaction{suffix}")
-    ax.legend(fontsize=8, frameon=False, title="grade")
-    ax.grid(alpha=0.25)
-    name = f"doe_interaction_{ra.response.spec.key}"
-    _save(fig, out, name, banner)
-    return name
+    fig, ax = pub.new_figure(pub.SINGLE)
+    draw_interaction(ax, ra)
+    return pub.save(fig, out, f"doe_interaction_{ra.response.spec.key}", banner=banner)
 
 
 def pareto(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
-    """Standardised effects against the significance and Bonferroni lines."""
     eff = ra.ranking.effects
-    fig, ax = plt.subplots(figsize=(5.4, max(2.6, 0.28 * len(eff) + 1.1)))
-    names = [e.term for e in eff][::-1]
-    vals = [e.abs_t for e in eff][::-1]
-    colours = ["#2f6fd0" if e.significant else "#b9c2d0" for e in eff][::-1]
-    ax.barh(names, vals, color=colours, height=0.68)
-    if np.isfinite(ra.ranking.t_critical):
-        ax.axvline(
-            ra.ranking.t_critical, color="#c0504d", ls="--", lw=1.1,
-            label=f"p=0.05  (|t|={ra.ranking.t_critical:.2f})",
-        )
-    if np.isfinite(ra.ranking.bonferroni_t):
-        ax.axvline(
-            ra.ranking.bonferroni_t, color="#7d1f1c", ls=":", lw=1.2,
-            label=f"Bonferroni  (|t|={ra.ranking.bonferroni_t:.2f})",
-        )
-    ax.set_xlabel("|standardised effect|")
-    ax.set_title(f"Pareto of effects — {ra.response.spec.label}")
-    ax.legend(fontsize=7.5, frameon=False, loc="lower right")
-    ax.tick_params(axis="y", labelsize=7.5)
-    name = f"doe_pareto_{ra.response.spec.key}"
-    _save(fig, out, name, banner)
-    return name
+    fig, ax = pub.new_figure(pub.SINGLE, max(2.2, 0.2 * len(eff) + 0.9))
+    draw_pareto(ax, ra)
+    return pub.save(fig, out, f"doe_pareto_{ra.response.spec.key}", banner=banner)
 
 
 def half_normal(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
-    """Inert terms fall on a line through the origin; real ones leave it.
-
-    This plot needs no error estimate, which makes it the one to trust when the
-    design has few residual degrees of freedom.
-    """
-    eff = sorted(ra.ranking.effects, key=lambda e: e.abs_t)
-    quantiles = list(ra.ranking.half_normal_quantiles)[::-1]
-    n = min(len(eff), len(quantiles))
-
-    fig, ax = plt.subplots(figsize=(4.8, 4.0))
-    for i in range(n):
-        colour = "#c0504d" if eff[i].significant else "#5d6879"
-        ax.scatter(quantiles[i], eff[i].abs_t, s=26, color=colour, zorder=3)
-        if eff[i].significant:
-            ax.annotate(
-                eff[i].term, (quantiles[i], eff[i].abs_t), fontsize=6.5,
-                xytext=(4, -1), textcoords="offset points",
-            )
-
-    inert = [(quantiles[i], eff[i].abs_t) for i in range(n) if not eff[i].significant]
-    if len(inert) >= 2:
-        xs = np.array([p[0] for p in inert])
-        ys = np.array([p[1] for p in inert])
-        denominator = float(np.sum(xs**2))
-        slope = float(np.sum(xs * ys) / denominator) if denominator > 0 else 0.0
-        line = np.linspace(0.0, max(quantiles[:n]) if n else 1.0, 20)
-        ax.plot(
-            line, slope * line, color="#b9c2d0", ls="--", lw=1,
-            label="line through the inert terms",
-        )
-        ax.legend(fontsize=7.5, frameon=False)
-
-    ax.set_xlabel("half-normal quantile")
-    ax.set_ylabel("|standardised effect|")
-    ax.set_title(f"Half-normal plot — {ra.response.spec.label}")
-    ax.grid(alpha=0.25)
-    name = f"doe_halfnormal_{ra.response.spec.key}"
-    _save(fig, out, name, banner)
-    return name
+    fig, ax = pub.new_figure(pub.SINGLE, 3.0)
+    draw_half_normal(ax, ra)
+    return pub.save(fig, out, f"doe_halfnormal_{ra.response.spec.key}", banner=banner)
 
 
 #: Which responses get the full figure set. Rendering all six for all nine
@@ -232,50 +257,74 @@ def half_normal(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
 FEATURED: tuple[str, ...] = ("pct_12h", "t50", "pct_24h")
 
 
+def _significant_terms(ra: ResponseAnalysis) -> str:
+    sig = [e.term for e in ra.ranking.effects if e.significant]
+    if not sig:
+        return "No term clears the 5 % line."
+    return f"Terms clearing the 5 % line: {', '.join(sig)}."
+
+
 def render_doe_figures(
     analyses: tuple[ResponseAnalysis, ...], out_dir: Path, banner: str | None
-) -> list[tuple[str, int, str]]:
-    """Render the DoE figure set. Returns (name, rank, caption)."""
+) -> list[FigureRecord]:
+    """Render the DoE figure set."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    made: list[tuple[str, int, str]] = []
+    made: list[FigureRecord] = []
 
     for ra in analyses:
-        if ra.response.spec.key not in FEATURED or not ra.usable:
+        key = ra.response.spec.key
+        if key not in FEATURED or not ra.usable:
             continue
         label = ra.response.spec.label
-        made.append((
-            contour_panel(ra, out_dir, banner), 2,
-            f"Fitted {label.lower()} across the tested composition region at each "
-            "grade, on a shared colour scale. White points are the formulations "
-            "actually run; blank area is outside the tested region and is not "
-            "predicted.",
-        ))
-        made.append((
-            surface_3d(ra, out_dir, banner), 4,
-            f"The {label.lower()} surface in relief, where curvature and saddle "
-            "regions are easier to see than in contour spacing.",
-        ))
-        made.append((
-            interaction(ra, out_dir, banner), 1,
-            f"{label} against HPMC content, drawn once per grade. Lines that fan "
-            "apart are the interaction: the effect of polymer content depends on "
-            "which grade carries it.",
-        ))
-        made.append((
-            traces(ra, out_dir, banner), 3,
-            f"Cox response traces for {label.lower()}. Each varies one component "
-            "and lets the others absorb the change in their existing proportions, "
-            "which is what happens when a formulation is adjusted.",
-        ))
-        made.append((
-            pareto(ra, out_dir, banner), 5,
-            f"Standardised effects on {label.lower()}, against the 5% and "
-            "Bonferroni significance lines.",
-        ))
-        made.append((
-            half_normal(ra, out_dir, banner), 6,
-            f"Half-normal plot for {label.lower()}. Inert terms lie on the line; "
-            "real effects depart from it. Needs no error estimate, so it is the "
-            "more trustworthy read when residual degrees of freedom are few.",
-        ))
+        prof = ra.interactions[0] if ra.interactions else None
+        fan = (
+            "The lines are close to parallel, so the HPMC effect barely depends on grade."
+            if prof is not None and prof.parallel
+            else "The lines are not parallel: the HPMC effect depends on which grade "
+            "carries it."
+        )
+        made += [
+            FigureRecord(
+                f"DOE-interaction-{key}", "doe", 10,
+                f"{label} against HPMC content predicted by the fitted model, one line "
+                f"per grade. {fan}",
+                interaction(ra, out_dir, banner),
+            ),
+            FigureRecord(
+                f"DOE-contour-{key}", "doe", 11,
+                f"Fitted {label.lower()} across the tested composition region at each "
+                "grade (panels), on a shared colour scale. Open circles are the "
+                "formulations actually run; blank area lies outside the tested region "
+                "and is not predicted. Lactose is the balance to 100 wt%.",
+                contour_panel(ra, out_dir, banner),
+            ),
+            FigureRecord(
+                f"DOE-traces-{key}", "doe", 12,
+                f"Cox response traces for {label.lower()}. Each varies one component "
+                "and lets the others absorb the change in their existing proportions, "
+                "which is what happens when a formulation is adjusted.",
+                traces(ra, out_dir, banner),
+            ),
+            FigureRecord(
+                f"DOE-pareto-{key}", "doe", 13,
+                f"Standardised effects on {label.lower()}, against the 5 % (dashed) and "
+                f"Bonferroni (dotted) significance lines. {_significant_terms(ra)}",
+                pareto(ra, out_dir, banner),
+            ),
+            FigureRecord(
+                f"DOE-halfnormal-{key}", "doe", 14,
+                f"Half-normal plot for {label.lower()}. Inert terms lie on the dashed "
+                "line through the origin; real effects depart from it (the "
+                f"{HALF_NORMAL_LABELS} largest are named). Needs no error "
+                "estimate, so it is the more trustworthy read when residual degrees of "
+                "freedom are few.",
+                half_normal(ra, out_dir, banner),
+            ),
+            FigureRecord(
+                f"DOE-surface3d-{key}", "supplementary", 30,
+                f"The fitted {label.lower()} surface in relief for each grade, where "
+                "curvature and saddle regions are easier to see than in contour spacing.",
+                surface_3d(ra, out_dir, banner),
+            ),
+        ]
     return made

@@ -1,351 +1,453 @@
-"""Render every figure as vector (SVG) and raster (PNG), with captions (AC9).
+"""Render every figure as a 300 dpi PNG, with captions (AC9).
 
 Figures are ranked by relevance to the storyline, not by the order they were
 convenient to produce. Rank 1 is the finding a formulator does not already know;
 the confirmatory ones rank last because confirming that more HPMC slows release
 is a pipeline sanity check, not a result.
+
+All styling comes from ``publication``: closed box, inward major and minor ticks,
+panel letters, no titles. The takeaway sentence lives in the caption, which is
+built from the computed numbers so it cannot claim something the data do not show.
 """
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
 from pathlib import Path
 
-import matplotlib
 import numpy as np
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 
 from pipeline import config
 from pipeline.analysis import Analysis
+from pipeline.equivalence.sets import EquivalenceSet
+from pipeline.figures import publication as pub
 from pipeline.figures.doe import render_doe_figures
+from pipeline.figures.publication import FigureRecord
+from pipeline.profiles.grid import project_onto_grid
 from pipeline.stress.subsets import StressTest
 
-GRADE_COLOURS = {"K100LV": "#3b7dd8", "K4M": "#d9822b", "K100M": "#8e5bb5"}
-_FALLBACK = ["#3b7dd8", "#d9822b", "#8e5bb5", "#3aa17e", "#c0504d"]
+#: Sideways nudge per grade (wt%) when grades share a composition in one plane,
+#: so three formulations at the same point do not print on top of each other.
+GRADE_NUDGE = 1.6
 
 
-@dataclass(frozen=True)
-class Figure:
-    """One rendered figure and its place in the argument."""
-
-    name: str
-    rank: int
-    caption: str
-    svg: str
-    png: str
+# --- shared data helpers -------------------------------------------------------
 
 
-def _style() -> None:
-    plt.rcParams.update(
-        {
-            "figure.dpi": 110,
-            "savefig.dpi": 200,
-            "font.size": 9,
-            "axes.grid": True,
-            "grid.alpha": 0.25,
-            "axes.spines.top": False,
-            "axes.spines.right": False,
-            "figure.autolayout": True,
-        }
-    )
+def banner_for(analysis: Analysis) -> str | None:
+    return pub.SYNTHETIC_BANNER if analysis.quality.is_synthetic else None
 
 
-def _colour(grade: str, index: int = 0) -> str:
-    return GRADE_COLOURS.get(grade, _FALLBACK[index % len(_FALLBACK)])
+def grades_by_viscosity(analysis: Analysis) -> list[str]:
+    pts = analysis.design_points.drop_duplicates("grade").sort_values("viscosity_cp")
+    return [str(g) for g in pts["grade"]]
 
 
-def _save(fig: plt.Figure, out: Path, name: str, banner: str | None) -> tuple[str, str]:
-    if banner:
-        fig.text(
-            0.5,
-            0.985,
-            banner,
-            ha="center",
-            va="top",
-            fontsize=7.5,
-            color="#a03030",
-            weight="bold",
-        )
-    svg = out / f"{name}.svg"
-    png = out / f"{name}.png"
-    fig.savefig(svg, format="svg", bbox_inches="tight")
-    fig.savefig(png, format="png", bbox_inches="tight")
-    plt.close(fig)
-    return svg.name, png.name
+def replicate_bands(
+    analysis: Analysis,
+) -> dict[tuple[int, str], tuple[np.ndarray, np.ndarray]]:
+    """Mean and SD across replicates per design point, on the analysis time grid.
+
+    Each replicate is projected onto the grid on its own clock first, exactly as
+    ``analysis._mean_profiles`` does, so the band and the mean line agree.
+    """
+    grid = analysis.time_grid_info
+    out: dict[tuple[int, str], tuple[np.ndarray, np.ndarray]] = {}
+    for (case, grade), group in analysis.db.profiles.groupby(["case", "grade"]):
+        stacked = np.vstack([
+            project_onto_grid(
+                rep["time_h"].to_numpy(dtype=float),
+                rep["pct_released"].to_numpy(dtype=float),
+                grid.times_h,
+                grid.max_gap_h,
+            )
+            for _, rep in group.groupby("replicate")
+        ])
+        ok = np.isfinite(stacked).all(axis=0)
+        mean = np.where(ok, stacked.mean(axis=0), np.nan)
+        sd = np.where(ok, stacked.std(axis=0, ddof=1) if len(stacked) > 1 else 0.0, np.nan)
+        out[(int(case), str(grade))] = (mean, sd)
+    return out
 
 
-def render_all(analysis: Analysis, stress: StressTest, out_dir: Path) -> list[Figure]:
-    """Render the full figure set and write a caption manifest."""
-    _style()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    banner = (
-        "SYNTHETIC PLACEHOLDER DATA — NOT EXPERIMENTAL"
-        if analysis.quality.is_synthetic
-        else None
-    )
-    figures: list[Figure] = []
-
-    def emit(name: str, rank: int, caption: str, fig: plt.Figure) -> None:
-        svg, png = _save(fig, out_dir, name, banner)
-        figures.append(Figure(name, rank, caption, svg, png))
-
-    # --- Rank 1: the non-additive lever -----------------------------------
-    fig, ax = plt.subplots(figsize=(5.4, 3.6))
-    levers = analysis.lever_effects
-    ax.bar(
-        [str(g) for g in levers["grade"]],
-        levers["fold_change_td"],
-        color=[_colour(str(g)) for g in levers["grade"]],
-        width=0.6,
-    )
-    ax.axhline(1.0, color="#444", lw=0.8, ls="--")
-    for i, v in enumerate(levers["fold_change_td"]):
-        ax.text(i, v + 0.02, f"×{v:.2f}", ha="center", fontsize=9, weight="bold")
-    ax.set_ylabel("Td multiplier from +10 wt% HPMC")
-    ax.set_xlabel("HPMC viscosity grade")
-    ax.set_title("The composition lever pays less at higher grade")
-    ax.set_ylim(0.9, float(levers["fold_change_td"].max()) * 1.15)
-    emit(
-        "01_lever_non_additivity",
-        1,
-        "Marginal effect of substituting 10 wt% lactose with HPMC, evaluated at the "
-        "design centroid for each grade. The effect shrinks monotonically with grade "
-        "viscosity: the two levers are substitutes, not complements. This is the "
-        "headline finding — the relationship a formulator cannot read off the "
-        "single-factor trends.",
-        fig,
-    )
-
-    # --- Rank 2: equivalence demonstration --------------------------------
+def best_cross_grade_set(analysis: Analysis) -> EquivalenceSet | None:
     cross = [s for s in analysis.equivalence if s.spans_multiple_grades]
-    if cross:
-        best = max(cross, key=lambda s: (len(s.grades_spanned), s.n_members))
-        fig, ax = plt.subplots(figsize=(5.6, 3.8))
-        others = [
-            (m.case, m.grade)
-            for m in best.members
-            if (m.case, m.grade) != (best.target_case, best.target_grade)
-        ][:3]
-        shown = [(best.target_case, best.target_grade), *others]
-        for i, key in enumerate(shown):
-            curve = analysis.observed_profiles.get(key)
-            if curve is None:
-                continue
-            f2 = next(
-                (m.f2 for m in best.members if (m.case, m.grade) == key), float("nan")
-            )
-            label = f"case {key[0]} / {key[1]}"
-            if i > 0:
-                label += f"  (f2 {f2:.0f})"
-            ax.plot(
-                analysis.time_grid,
-                curve,
-                marker="o",
-                ms=3,
-                lw=1.6,
-                color=_colour(key[1], i),
-                label=label,
-            )
-        ax.set_xlim(config.PLOT_MIN_TIME_H, config.PLOT_MAX_TIME_H)
-        ax.set_ylim(config.PLOT_MIN_RELEASE_PCT, config.PLOT_MAX_RELEASE_PCT)
-        ax.set_xlabel("time (h)")
-        ax.set_ylabel("% released")
-        ax.set_title("Different compositions, different grades, same profile")
-        ax.legend(fontsize=7.5, frameon=False)
+    if not cross:
+        return None
+    return max(cross, key=lambda s: (len(s.grades_spanned), s.n_members))
+
+
+# --- drawing primitives (shared with headlines) -------------------------------
+
+
+def draw_lever(ax: Axes, analysis: Analysis) -> None:
+    levers = analysis.lever_effects
+    grades = [str(g) for g in levers["grade"]]
+    values = levers["fold_change_td"].to_numpy(dtype=float)
+    x = np.arange(len(grades))
+    for i, (g, v) in enumerate(zip(grades, values, strict=True)):
+        st = pub.grade_style(g, i)
+        ax.bar(i, v, width=0.6, color=st.colour, edgecolor="black", linewidth=0.5)
+        ax.text(i, v, f"×{v:.2f}", ha="center", va="bottom", fontsize=7,
+                transform=ax.transData)
+    ax.axhline(1.0, color=pub.INK, lw=0.7, ls="--", label="no change (×1)")
+    ax.set_xticks(x, grades)
+    pub.categorical(ax, "x")
+    ax.set_xlim(-0.6, len(grades) - 0.4)
+    ax.set_ylim(0, float(np.nanmax(values)) * 1.18)
+    pub.auto_minor(ax)
+    ax.set_xlabel("HPMC grade")
+    ax.set_ylabel("Td multiplier, +10 wt% HPMC")
+    ax.legend(loc="upper right")
+
+
+def lever_caption(analysis: Analysis) -> str:
+    levers = analysis.lever_effects
+    parts = [f"{g} ×{v:.2f}" for g, v in zip(levers["grade"], levers["fold_change_td"],
+                                                strict=True)]
+    values = levers["fold_change_td"].to_numpy(dtype=float)
+    diffs = np.diff(values)
+    if np.all(diffs < 0):
+        trend = ("The effect shrinks as grade viscosity rises: the composition and grade "
+                 "levers are partial substitutes, not independent.")
+    elif np.all(diffs > 0):
+        trend = "The effect grows as grade viscosity rises: the two levers reinforce."
+    else:
+        trend = "The effect does not change monotonically with grade viscosity."
+    return (
+        "Fold change in Weibull scale Td from substituting 10 wt% lactose with HPMC, "
+        f"evaluated at the design centroid for each grade ({', '.join(parts)}); grades "
+        f"ordered by viscosity. Dashed line: no change. {trend}"
+    )
+
+
+def draw_equivalence(ax: Axes, analysis: Analysis, best: EquivalenceSet) -> int:
+    """Overlay the target and up to three f2-similar members. Returns curves drawn."""
+    others = [
+        (m.case, m.grade)
+        for m in best.members
+        if (m.case, m.grade) != (best.target_case, best.target_grade)
+    ][:3]
+    shown = [(best.target_case, best.target_grade), *others]
+    markers = ("o", "s", "^", "D")
+    lines = ("-", "--", "-.", ":")
+    drawn = 0
+    for i, key in enumerate(shown):
+        curve = analysis.observed_profiles.get(key)
+        if curve is None:
+            continue
+        f2 = next((m.f2 for m in best.members if (m.case, m.grade) == key), float("nan"))
+        label = f"Case {key[0]}, {key[1]}" + (" (target)" if i == 0 else f", f2 = {f2:.0f}")
+        ok = np.isfinite(curve)
+        ax.plot(
+            analysis.time_grid[ok], curve[ok], color=pub.grade_style(key[1], i).colour,
+            marker=markers[i % 4], linestyle=lines[i % 4], markersize=3.2,
+            markerfacecolor="white" if i else None, markeredgewidth=0.7, label=label,
+        )
+        drawn += 1
+    pub.time_axis(ax)
+    pub.percent_axis(ax)
+    ax.legend(loc="lower right")
+    return drawn
+
+
+def draw_stress(ax: Axes, stress: StressTest) -> None:
+    usable = [r for r in stress.results if r.estimable]
+    ax.plot(
+        [r.size for r in usable], [r.profile_rmse_pct for r in usable],
+        color=pub.OKABE_ITO[0], marker="o", markerfacecolor="white",
+        label="reduced design",
+    )
+    ax.axhline(stress.full_profile_rmse_pct, color=pub.INK, ls="--", lw=0.7,
+               label=f"full design ({stress.full_profile_rmse_pct:.2f} %)")
+    if stress.recommended:
+        ax.axvline(stress.recommended.size, color=pub.HIGHLIGHT, ls=":", lw=1.0,
+                   label=f"recommended ({stress.recommended.size} runs)")
+    top = max([r.profile_rmse_pct for r in usable] + [stress.full_profile_rmse_pct])
+    ax.set_ylim(0, top * 1.3)
+    pub.auto_minor(ax)
+    ax.set_xlabel("Runs in the reduced design")
+    ax.set_ylabel("Profile RMSE (% released)")
+    ax.legend(loc="lower right")
+
+
+def draw_design_plane(
+    ax: Axes,
+    analysis: Analysis,
+    selected: set[tuple[int, str]] | None = None,
+) -> None:
+    """Every formulation in API-HPMC space; grades nudged apart, selected filled."""
+    grades = grades_by_viscosity(analysis)
+    offset = {g: (i - (len(grades) - 1) / 2) * GRADE_NUDGE for i, g in enumerate(grades)}
+    pts = analysis.design_points
+    for i, g in enumerate(grades):
+        sub = pts[pts["grade"] == g]
+        st = pub.grade_style(g, i)
+        chosen = [
+            selected is None or (int(r.case), str(r.grade)) in selected
+            for r in sub.itertuples()
+        ]
+        mask = np.array(chosen, dtype=bool)
+        x = sub["api_wt"].to_numpy(dtype=float) + offset[g]
+        y = sub["hpmc_wt"].to_numpy(dtype=float)
+        ax.scatter(x[mask], y[mask], marker=st.marker, s=16, color=st.colour,
+                   edgecolor="black", linewidth=0.4, label=g, zorder=3, clip_on=False)
+        if selected is not None and (~mask).any():
+            ax.scatter(x[~mask], y[~mask], marker=st.marker, s=16, facecolor="white",
+                       edgecolor=st.colour, linewidth=0.7, zorder=2, clip_on=False)
+    pub.auto_minor(ax)
+    ax.set_xlabel("API (wt%)")
+    ax.set_ylabel("HPMC (wt%)")
+    handles = [
+        Line2D([], [], marker=pub.grade_style(g, i).marker, color=pub.grade_style(g, i).colour,
+               linestyle="none", markeredgecolor="black", markeredgewidth=0.4, label=g)
+        for i, g in enumerate(grades)
+    ]
+    if selected is not None:
+        handles.append(Line2D([], [], marker="o", color=pub.MUTED, markerfacecolor="white",
+                              linestyle="none", label="not selected"))
+    ax.margins(x=0.08, y=0.08)
+    ax.legend(handles=handles, loc="upper center", ncols=2,
+              bbox_to_anchor=(0.5, 1.0), handletextpad=0.2, columnspacing=0.8)
+    lo, hi = ax.get_ylim()
+    ax.set_ylim(lo, hi + 0.25 * (hi - lo))
+
+
+# --- the figure set ----------------------------------------------------------
+
+
+def render_all(analysis: Analysis, stress: StressTest, out_dir: Path) -> list[FigureRecord]:
+    """Render the full figure set, the headline subset, and the caption manifests."""
+    from pipeline.figures.headlines import render_headlines
+
+    pub.apply_style()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for stale in [*out_dir.glob("*.svg"), *out_dir.glob("*.png")]:
+        stale.unlink()
+    banner = banner_for(analysis)
+    records: list[FigureRecord] = []
+
+    def emit(fid: str, name: str, rank: int, caption: str, fig: Figure,
+             section: str = "main") -> None:
+        records.append(FigureRecord(fid, section, rank, caption,
+                                    pub.save(fig, out_dir, name, banner=banner)))
+
+    # --- F01: the non-additive lever --------------------------------------
+    fig, ax = pub.new_figure(pub.SINGLE, 2.6)
+    draw_lever(ax, analysis)
+    emit("F01", "01_lever_non_additivity", 1, lever_caption(analysis), fig)
+
+    # --- F02: equivalence demonstration ----------------------------------
+    best = best_cross_grade_set(analysis)
+    if best is not None:
+        fig, ax = pub.new_figure(pub.SINGLE, 2.8)
+        draw_equivalence(ax, analysis, best)
         emit(
-            "02_equivalence_demonstration",
-            2,
-            "Measured profiles of formulations that differ in both composition and "
-            "HPMC grade yet are f2-similar. Formulation freedom for a given target is "
-            "real and can be spent on secondary criteria.",
+            "F02", "02_equivalence_demonstration", 2,
+            f"Mean measured profiles of formulations f2-similar to case "
+            f"{best.target_case} ({best.target_grade}), spanning "
+            f"{len(best.grades_spanned)} grades ({', '.join(best.grades_spanned)}). "
+            "Different composition and grade can give the same release, so formulation "
+            "freedom for a given target can be spent on secondary criteria.",
             fig,
         )
 
-    # --- Rank 3: stress-test degradation ----------------------------------
-    fig, ax = plt.subplots(figsize=(5.4, 3.6))
-    usable = [r for r in stress.results if r.estimable]
-    ax.plot(
-        [r.size for r in usable],
-        [r.profile_rmse_pct for r in usable],
-        marker="o",
-        color="#3b7dd8",
-        label="profile RMSE",
-    )
-    ax.axhline(
-        stress.full_profile_rmse_pct, color="#444", ls="--", lw=0.9, label="full design"
-    )
-    if stress.recommended:
-        ax.axvline(
-            stress.recommended.size,
-            color="#c0504d",
-            ls=":",
-            lw=1.4,
-            label=f"recommended ({stress.recommended.size} runs)",
-        )
-    ax.set_xlabel("runs in the reduced design")
-    ax.set_ylabel("profile RMSE (% released)")
-    ax.set_title("What a smaller design costs")
-    ax.legend(fontsize=7.5, frameon=False)
+    # --- F03: stress-test degradation ------------------------------------
+    fig, ax = pub.new_figure(pub.SINGLE, 2.6)
+    draw_stress(ax, stress)
     emit(
-        "03_stress_degradation",
-        3,
-        "Prediction error of D-optimal reduced designs against the full 33-run design. "
-        "Designs below the recommended size are excluded even where apparent error is "
-        "low, because they cannot estimate their own uncertainty.",
+        "F03", "03_stress_degradation", 3,
+        f"Profile prediction error of D-optimal reduced designs against the full "
+        f"{len(analysis.design_points)}-run design (dashed). Designs below the "
+        "recommended size (dotted) are excluded even where apparent error is low, "
+        "because they cannot estimate their own uncertainty.",
         fig,
     )
 
-    # --- Rank 4: FDS ------------------------------------------------------
+    # --- F04: FDS --------------------------------------------------------
     fds_model = (
-        "scheffe_linear"
-        if "scheffe_linear" in analysis.design_diagnostics
+        "scheffe_linear" if "scheffe_linear" in analysis.design_diagnostics
         else "scheffe_quadratic"
     )
     diag = analysis.design_diagnostics.get(fds_model)
     if diag is not None and diag.fds_spv:
         spv = np.asarray(diag.fds_spv)
-        fig, ax = plt.subplots(figsize=(5.2, 3.5))
-        ax.plot(np.linspace(0, 1, len(spv)), spv, color="#3aa17e", lw=1.8)
-        ax.set_xlabel("fraction of design space")
-        ax.set_ylabel("scaled prediction variance")
-        ax.set_title("Fraction of design space (FDS)")
+        fig, ax = pub.new_figure(pub.SINGLE, 2.6)
+        ax.plot(np.linspace(0, 1, len(spv)), spv, color=pub.OKABE_ITO[3])
+        ax.set_xlim(0, 1)
+        ax.set_ylim(bottom=0)
+        pub.auto_minor(ax)
+        ax.set_xlabel("Fraction of design space")
+        ax.set_ylabel("Scaled prediction variance")
         emit(
-            "04_fds",
-            4,
-            "Scaled prediction variance across the convex hull of tested compositions "
-            "crossed with the tested viscosity range. The flatter and lower the curve, "
-            "the more uniformly trustworthy predictions are across the region.",
+            "F04", "04_fds", 4,
+            "Fraction-of-design-space plot: scaled prediction variance across the convex "
+            "hull of tested compositions crossed with the tested viscosity range. The "
+            "flatter and lower the curve, the more uniformly trustworthy predictions are.",
             fig,
         )
 
-    # --- Rank 5: observed vs predicted (CV) -------------------------------
+    # --- F05: observed vs predicted (CV) ---------------------------------
     folds = [f for f in analysis.cross_validation.folds if np.isfinite(f.profile_rmse_pct)]
     if folds:
-        fig, ax = plt.subplots(figsize=(4.8, 4.4))
-        obs = [f.observed.get("log10_td", np.nan) for f in folds]
-        pred = [f.predicted.get("log10_td", np.nan) for f in folds]
-        colours = [_colour(f.grade) for f in folds]
-        ax.scatter(obs, pred, c=colours, s=30, edgecolor="white", lw=0.6, zorder=3)
-        lo = float(np.nanmin(obs + pred))
-        hi = float(np.nanmax(obs + pred))
-        ax.plot([lo, hi], [lo, hi], color="#444", ls="--", lw=0.9)
-        ax.set_xlabel("observed log₁₀(Td)")
-        ax.set_ylabel("cross-validated prediction")
-        ax.set_title("Leave-one-formulation-out prediction")
+        fig, ax = pub.new_figure(pub.SINGLE, 3.2)
+        grades = grades_by_viscosity(analysis)
+        allv: list[float] = []
+        for i, g in enumerate(grades):
+            sub = [f for f in folds if f.grade == g]
+            obs = [f.observed.get("log10_td", np.nan) for f in sub]
+            pred = [f.predicted.get("log10_td", np.nan) for f in sub]
+            allv += obs + pred
+            st = pub.grade_style(g, i)
+            ax.scatter(obs, pred, marker=st.marker, s=18, color=st.colour,
+                       edgecolor="black", linewidth=0.4, label=g, zorder=3)
+        lo, hi = float(np.nanmin(allv)), float(np.nanmax(allv))
+        pad = 0.05 * (hi - lo)
+        ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], color=pub.INK, ls="--", lw=0.7,
+                label="y = x")
+        ax.set_xlim(lo - pad, hi + pad)
+        ax.set_ylim(lo - pad, hi + pad)
+        ax.set_aspect("equal")
+        pub.auto_minor(ax)
+        ax.set_xlabel("Observed log$_{10}$ Td (h)")
+        ax.set_ylabel("Predicted log$_{10}$ Td (h)")
+        ax.legend(loc="upper left")
+        rmse = analysis.cross_validation.rmse_by_response.get("log10_td", float("nan"))
         emit(
-            "05_cv_observed_vs_predicted",
-            5,
-            "Each point is a formulation predicted by a surface refitted without it, "
-            "with all of its replicates held out together. This is the error attached "
-            "to every prediction in the tool.",
+            "F05", "05_cv_observed_vs_predicted", 5,
+            "Leave-one-formulation-out prediction of log10 Td: each point is predicted "
+            "by a surface refitted without it, with all its replicates held out together "
+            f"(RMSE {rmse:.3f} log10 units). Dashed: identity.",
             fig,
         )
 
-    # --- Rank 6: response correlation heatmap -----------------------------
+    # --- F06: response correlation heatmap -------------------------------
     space = analysis.response_space
-    fig, ax = plt.subplots(figsize=(5.6, 5.0))
+    fig, ax = pub.new_figure(pub.ONEHALF * 0.8, pub.ONEHALF * 0.7)
     matrix = space.pearson.to_numpy()
     im = ax.imshow(matrix, cmap="RdBu_r", vmin=-1, vmax=1)
-    ax.set_xticks(range(len(space.metrics)))
-    ax.set_yticks(range(len(space.metrics)))
-    ax.set_xticklabels(space.metrics, rotation=90, fontsize=7)
-    ax.set_yticklabels(space.metrics, fontsize=7)
-    ax.grid(False)
-    fig.colorbar(im, ax=ax, shrink=0.8, label="Pearson r")
-    ax.set_title(f"{len(space.metrics)} metrics, {space.n_components_90} real dimensions")
+    n = len(space.metrics)
+    ax.set_xticks(range(n), space.metrics, rotation=90)
+    ax.set_yticks(range(n), space.metrics)
+    ax.tick_params(which="both", top=False, right=False, length=0)
+    pub.categorical(ax, "both")
+    bar = fig.colorbar(im, ax=ax, shrink=0.85, aspect=25)
+    bar.set_label("Pearson r")
+    bar.ax.tick_params(which="both", direction="in")
     emit(
-        "06_response_correlation",
-        6,
-        "Correlation among the AC2 metrics. The block structure is why agreement "
-        "between these metrics is not independent confirmation, and why conclusions "
-        "are drawn only on the reduced key-response set.",
+        "F06", "06_response_correlation", 6,
+        f"Pearson correlation among the {n} AC2 metrics, which span only "
+        f"{space.n_components_90} independent dimensions (90 % variance). The block "
+        "structure is why agreement between these metrics is not independent "
+        "confirmation, and why conclusions rest on the reduced key-response set.",
         fig,
     )
 
-    # --- Rank 7: PCA biplot ----------------------------------------------
+    # --- F07: PCA biplot -------------------------------------------------
     if space.scores.shape[1] > 1:
-        fig, ax = plt.subplots(figsize=(5.2, 4.6))
-        ax.scatter(space.scores[:, 0], space.scores[:, 1], s=26, color="#8e5bb5", alpha=0.75)
-        scale = float(np.abs(space.scores[:, :2]).max()) * 0.9
-        for metric in space.loadings.index:
-            x = float(space.loadings.loc[metric, "PC1"]) * scale
-            y = float(space.loadings.loc[metric, "PC2"]) * scale
-            ax.arrow(0, 0, x, y, color="#c0504d", lw=0.8, head_width=scale * 0.02)
-            ax.text(x * 1.08, y * 1.08, metric, fontsize=6.5, color="#c0504d")
+        fig, ax = pub.new_figure(pub.SINGLE * 1.15, 3.4)
+        ax.axhline(0, color=pub.MUTED, lw=0.5, ls=":")
+        ax.axvline(0, color=pub.MUTED, lw=0.5, ls=":")
+        ax.scatter(space.scores[:, 0], space.scores[:, 1], s=12, facecolor="white",
+                   edgecolor=pub.OKABE_ITO[0], linewidth=0.7, zorder=3)
+        scale = float(np.abs(space.scores[:, :2]).max()) * 0.85
+        lim = float(np.abs(space.scores[:, :2]).max()) * 1.25
+        tips = {
+            m: (float(space.loadings.loc[m, "PC1"]) * scale,
+                float(space.loadings.loc[m, "PC2"]) * scale)
+            for m in space.loadings.index
+        }
+        for x, y in tips.values():
+            ax.annotate("", xy=(x, y), xytext=(0, 0),
+                        arrowprops={"arrowstyle": "-|>", "color": pub.HIGHLIGHT,
+                                    "lw": 0.7, "shrinkA": 0, "shrinkB": 0})
+        # Labels on each side are spread vertically so near-parallel loadings
+        # (t10, t25 and t50, say) stay legible; a thin leader joins label and tip.
+        for side in (1, -1):
+            names = [m for m, (x, _) in tips.items() if (x >= 0) == (side > 0)]
+            ys = pub.spread_labels([tips[m][1] * 1.1 for m in names], 0.075 * lim)
+            for m, ly in zip(names, ys, strict=True):
+                x, y = tips[m]
+                lx = x * 1.1 + side * 0.03 * lim
+                ax.annotate(m, xy=(x, y), xytext=(lx, ly), fontsize=5.5,
+                            color=pub.HIGHLIGHT, ha="left" if side > 0 else "right",
+                            va="center",
+                            arrowprops={"arrowstyle": "-", "color": pub.MUTED,
+                                        "lw": 0.3, "shrinkA": 1, "shrinkB": 1})
+        ax.set_xlim(-lim, lim)
+        ax.set_ylim(-lim, lim)
+        pub.auto_minor(ax)
         ax.set_xlabel(f"PC1 ({space.explained_variance_ratio[0]:.0%})")
         ax.set_ylabel(f"PC2 ({space.explained_variance_ratio[1]:.0%})")
-        ax.set_title("Response space")
         emit(
-            "07_pca_biplot",
-            7,
-            "Principal components of the standardised response matrix. The axes "
-            "correspond to Weibull scale, asymptote and shape, which is the empirical "
-            "justification for modelling those parameters rather than each metric.",
+            "F07", "07_pca_biplot", 7,
+            "Principal components of the standardised response matrix: formulations "
+            "(circles) and metric loadings (arrows, labels joined by thin leaders). "
+            "Dotted lines mark the origin.",
             fig,
         )
 
-    # --- Rank 8: raw profiles by grade (confirmatory) ---------------------
-    grades = sorted({g for _, g in analysis.observed_profiles})
-    fig, axes = plt.subplots(1, len(grades), figsize=(3.4 * len(grades), 3.3), sharey=True)
-    axes = np.atleast_1d(axes)
-    for ax, grade in zip(axes, grades, strict=False):
+    # --- F08: raw profiles by grade (confirmatory) -----------------------
+    grades = grades_by_viscosity(analysis)
+    fig, axes = pub.new_figure(pub.DOUBLE, 2.4, ncols=len(grades), sharey=True)
+    axes = list(np.atleast_1d(axes))
+    for i, (ax, grade) in enumerate(zip(axes, grades, strict=False)):
+        st = pub.grade_style(grade, i)
         for (_case, g), curve in sorted(analysis.observed_profiles.items()):
             if g != grade:
                 continue
-            ax.plot(analysis.time_grid, curve, lw=1.1, alpha=0.85, color=_colour(grade))
-        ax.axhline(config.CENSORING_PCT, color="#888", ls=":", lw=0.9)
-        ax.set_xlim(config.PLOT_MIN_TIME_H, config.PLOT_MAX_TIME_H)
-        ax.set_ylim(config.PLOT_MIN_RELEASE_PCT, config.PLOT_MAX_RELEASE_PCT)
-        ax.set_title(grade)
-        ax.set_xlabel("time (h)")
-    axes[0].set_ylabel("% released")
-    fig.suptitle("Measured profiles by grade (confirmatory)", y=1.02, fontsize=10)
+            ok = np.isfinite(curve)
+            ax.plot(analysis.time_grid[ok], curve[ok], color=st.colour, lw=0.8,
+                    linestyle=st.linestyle, alpha=0.9)
+        ax.axhline(config.CENSORING_PCT, color=pub.MUTED, ls=":", lw=0.7)
+        pub.time_axis(ax)
+        pub.percent_axis(ax)
+        pub.corner_note(ax, grade, "lower right")
+        if i:
+            ax.set_ylabel("")
+    pub.label_panels(axes)
     emit(
-        "08_profiles_by_grade",
-        8,
-        "All measured profiles, split by grade, with the 80% censoring threshold "
-        "marked. Confirms the known direction — higher grade releases more slowly — "
-        "and is a pipeline sanity check rather than a finding.",
+        "F08", "08_profiles_by_grade", 8,
+        "Mean measured profile of every formulation, one panel per grade (ordered by "
+        f"viscosity), with the {config.CENSORING_PCT:.0f} % censoring threshold dotted. "
+        "Confirms the known direction and is a pipeline sanity check rather than a finding.",
         fig,
     )
 
-    # --- Rank 9: surface contour ------------------------------------------
-    fig, ax = plt.subplots(figsize=(5.0, 4.2))
-    points = analysis.design_points
-    sc = ax.scatter(
-        points["hpmc_wt"],
-        points["api_wt"],
-        c=points["log10_td_mean"],
-        s=90,
-        cmap="viridis",
-        edgecolor="white",
-        lw=0.7,
-    )
-    fig.colorbar(sc, ax=ax, label="log₁₀(Td), h")
-    ax.set_xlabel("HPMC (wt%)")
-    ax.set_ylabel("API (wt%)")
-    ax.set_title("Design points in composition space")
+    # --- F09: design points coloured by Td -------------------------------
+    pts = analysis.design_points
+    vmin, vmax = float(pts["log10_td_mean"].min()), float(pts["log10_td_mean"].max())
+    fig, axes = pub.new_figure(pub.DOUBLE, 2.4, ncols=len(grades), sharey=True)
+    axes = list(np.atleast_1d(axes))
+    sc = None
+    for i, (ax, grade) in enumerate(zip(axes, grades, strict=False)):
+        sub = pts[pts["grade"] == grade]
+        sc = ax.scatter(sub["hpmc_wt"], sub["api_wt"], c=sub["log10_td_mean"], s=36,
+                        cmap="viridis", vmin=vmin, vmax=vmax,
+                        marker=pub.grade_style(grade, i).marker,
+                        edgecolor="black", linewidth=0.4)
+        pub.corner_note(ax, grade, "upper right")
+        pub.auto_minor(ax)
+        ax.set_xlabel("HPMC (wt%)")
+    axes[0].set_ylabel("API (wt%)")
+    if sc is not None:
+        bar = fig.colorbar(sc, ax=axes, shrink=0.95, aspect=25, pad=0.02)
+        bar.set_label("log$_{10}$ Td (h)")
+        bar.ax.tick_params(which="both", direction="in")
+    pub.label_panels(axes)
     emit(
-        "09_design_space",
-        9,
-        "The 11 compositions in API–HPMC space, coloured by fitted Weibull scale. "
-        "Lactose is the balance to 100 wt%, so this plane carries the whole mixture.",
+        "F09", "09_design_space", 9,
+        f"The {pts[['api_wt', 'hpmc_wt']].drop_duplicates().shape[0]} tested compositions "
+        "in API–HPMC space, one panel per grade, coloured by the fitted Weibull scale on "
+        "a shared scale. Lactose is the balance to 100 wt%.",
         fig,
     )
 
-    # Classical DoE figures. Ranked ahead of most of the profile plots: these are
-    # what a formulator opens first.
-    for name, rank, caption in render_doe_figures(analysis.doe.responses, out_dir, banner):
-        figures.append(Figure(name, rank, caption, f"{name}.svg", f"{name}.png"))
+    # --- classical DoE ---------------------------------------------------
+    records += render_doe_figures(analysis.doe.responses, out_dir, banner)
 
-    manifest = [
-        {"name": f.name, "rank": f.rank, "caption": f.caption, "svg": f.svg, "png": f.png}
-        for f in sorted(figures, key=lambda f: f.rank)
-    ]
-    (out_dir / "captions.json").write_text(
-        json.dumps(manifest, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
-    )
-    return figures
+    pub.write_captions(records, out_dir, "Figures")
+    render_headlines(analysis, stress, out_dir / "headlines")
+    return records
