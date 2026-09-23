@@ -14,9 +14,12 @@ import hashlib
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from pipeline.analysis import SURFACE_RESPONSES, Analysis, run_analysis
+from pipeline.audit import AuditReport, run_audit, save
 from pipeline.design.report import render_markdown as design_markdown
+from pipeline.diagnostics import Diagnostics
 from pipeline.diagnostics import render_console as diag_console
 from pipeline.diagnostics import write as write_diagnostics
 from pipeline.export.data_js import build_payload, write_data_js
@@ -50,6 +53,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--skip-figures", action="store_true", help="skip figure rendering"
     )
+    parser.add_argument(
+        "--audit",
+        action="store_true",
+        help=(
+            "print the privacy-safe audit (booleans and integers only) at the end, "
+            "or in place of the run if it fails"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -72,6 +83,22 @@ def _stress(analysis: Analysis) -> StressTest:
         grades=points["grade"].to_numpy(),
         sizes=tuple(range(6, len(points) + 1, 3)),
     )
+
+
+def _payload(
+    analysis: Analysis, stress: StressTest, diagnostics: Diagnostics, source: str
+) -> tuple[dict[str, Any], AuditReport]:
+    """The dashboard payload, carrying its own audit for the Admin tab."""
+    payload = build_payload(analysis, stress, diagnostics)
+    audit = run_audit(source, analysis=analysis, stress=stress, payload=payload)
+    payload["audit"] = audit.as_payload()
+    return payload, audit
+
+
+def _print_audit(audit: AuditReport, out_root: Path, path: Path | None = None) -> None:
+    print(audit.render())
+    saved = path or save(audit, out_root / "reports" / "audit.txt")
+    print(f"\nAudit saved to {saved}")
 
 
 def _write_reports(analysis: Analysis, stress: StressTest, reports: Path) -> None:
@@ -116,6 +143,17 @@ def _write_reports(analysis: Analysis, stress: StressTest, reports: Path) -> Non
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    try:
+        return _run(args)
+    except Exception:
+        # The run died, but the audit isolates each stage and so can still say
+        # where. Printed before the traceback propagates.
+        if args.audit:
+            _print_audit(run_audit(args.input), Path(args.outputs))
+        raise
+
+
+def _run(args: argparse.Namespace) -> int:
     out_root = Path(args.outputs)
     reports = out_root / "reports"
 
@@ -123,6 +161,8 @@ def main(argv: list[str] | None = None) -> int:
         db = load_database(args.input)
     except SchemaError as exc:
         print(f"INGEST FAILED: {exc}", file=sys.stderr)
+        if args.audit:
+            _print_audit(run_audit(args.input), Path(args.outputs))
         return 2
 
     analysis = run_analysis(db)
@@ -147,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     diagnostics = write_diagnostics(analysis, stress, reports)
     print(f"Diagnostics -> {reports / 'diagnostics.md'} (+ .json)")
 
-    payload = build_payload(analysis, stress, diagnostics)
+    payload, audit = _payload(analysis, stress, diagnostics, args.input)
     data_path = write_data_js(payload, Path(args.dashboard) / "data.js")
     print(f"Dashboard data -> {data_path}")
 
@@ -169,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
             # to pick up a stray timestamp or dict ordering.
             repeat_diag = write_diagnostics(repeat, repeat_stress, Path(tmp))
             again = write_data_js(
-                build_payload(repeat, repeat_stress, repeat_diag),
+                _payload(repeat, repeat_stress, repeat_diag, args.input)[0],
                 Path(tmp) / "data.js",
             )
             second = hashlib.sha256(again.read_bytes()).hexdigest()
@@ -189,6 +229,11 @@ def main(argv: list[str] | None = None) -> int:
             "\nNOTE: the database declares itself synthetic placeholder material. "
             "Every output carries the provenance banner; no result below is experimental."
         )
+    # Always saved (outputs/ is gitignored); printed only when asked for.
+    audit_path = save(audit, reports / "audit.txt")
+    if args.audit:
+        print()
+        _print_audit(audit, out_root, audit_path)
     return 0
 
 
