@@ -98,6 +98,30 @@ ADEQUATE_PRECISION_FLAG: Final[float] = 4.0
 TIME_CLUSTER_ABS_H: Final[float] = 0.5 / 60.0
 TIME_CLUSTER_REL: Final[float] = 0.01
 
+# --- Analysis window ----------------------------------------------------------
+# Every metric, fit and comparison uses 0 to this many hours. Runs extended past
+# it for diagnostic reasons are trimmed at load. The first reading after the
+# window is kept, so the value AT the window end is interpolated rather than
+# lost to a reading that landed at 24.02 h.
+ANALYSIS_WINDOW_H: Final[float] = 24.0
+
+# --- Nominal schedule for densely sampled data ------------------------------
+# Manual pulls cluster into a nominal schedule (above). An in-situ probe logging
+# every few minutes does not: its thousands of distinct timestamps recover a
+# grid of hundreds of points, different for every method revision. Once the
+# recovered grid would exceed MAX_GRID_POINTS, profiles are instead resampled
+# onto this fixed schedule. Resampling is used only for profile COMPARISONS
+# (mean curves, f2, cross-validation, stress test); per-profile metrics and fits
+# still use every measured point.
+MAX_GRID_POINTS: Final[int] = 60
+NOMINAL_SCHEDULE_H: Final[tuple[float, ...]] = (
+    0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0,
+    10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0,
+)
+#: A resampled point is left blank when the readings either side of it are
+#: further apart than this, so a hole in the record is never bridged by a line.
+MAX_INTERP_GAP_H: Final[float] = 1.0
+
 # =============================================================================
 # PLOTTING -- AXIS LIMITS
 # =============================================================================

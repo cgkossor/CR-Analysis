@@ -83,7 +83,7 @@ class Analysis:
 
 
 def _mean_profiles(
-    db: Database, grid: np.ndarray
+    db: Database, grid: TimeGrid
 ) -> dict[tuple[int, str], np.ndarray]:
     """Mean profile per design point, interpolated onto the canonical grid.
 
@@ -91,15 +91,28 @@ def _mean_profiles(
     plain reindex only matches exact timestamps, so a profile sampled at 61.0 min
     contributes nothing at a 60.0 min grid point and the value becomes NaN — which
     then poisons every statistic computed across the vector.
+
+    Each replicate is projected onto the grid on its own clock BEFORE averaging.
+    Averaging raw readings by timestamp first only works when every replicate
+    shares one clock; with a probe per vessel each timestamp belongs to a single
+    replicate, and the "mean" becomes a zigzag between them.
     """
     out: dict[tuple[int, str], np.ndarray] = {}
     for (case, grade), group in db.profiles.groupby(["case", "grade"]):
-        mean_by_time = group.groupby("time_h")["pct_released"].mean().sort_index()
-        out[(int(case), str(grade))] = project_onto_grid(
-            mean_by_time.index.to_numpy(dtype=float),
-            mean_by_time.to_numpy(dtype=float),
-            grid,
-        )
+        stacked = [
+            project_onto_grid(
+                rep["time_h"].to_numpy(dtype=float),
+                rep["pct_released"].to_numpy(dtype=float),
+                grid.times_h,
+                grid.max_gap_h,
+            )
+            for _, rep in group.groupby("replicate")
+        ]
+        matrix = np.vstack(stacked)
+        # A grid point is reported only where every replicate has a value, so
+        # the mean never silently changes composition along the curve.
+        mean = matrix.mean(axis=0)
+        out[(int(case), str(grade))] = np.where(np.isfinite(matrix).all(axis=0), mean, np.nan)
     return out
 
 
@@ -204,7 +217,7 @@ def run_analysis(db: Database) -> Analysis:
     ]
     grid_info = build_time_grid(vectors)
     grid = grid_info.times_h
-    observed = _mean_profiles(db, grid)
+    observed = _mean_profiles(db, grid_info)
 
     cv = leave_one_formulation_out(
         comp,

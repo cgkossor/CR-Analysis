@@ -79,6 +79,7 @@ def _replicate_sd(a: Analysis, case: int, grade: str) -> np.ndarray:
                 ordered["time_h"].to_numpy(dtype=float),
                 ordered["pct_released"].to_numpy(dtype=float),
                 a.time_grid,
+                a.time_grid_info.max_gap_h,
             )
         )
     if len(stacked) < 2:

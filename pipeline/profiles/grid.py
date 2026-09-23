@@ -48,6 +48,14 @@ class TimeGrid:
 
     notes: tuple[str, ...] = field(default=())
 
+    resampled: bool = False
+    """True when the data were too densely sampled to cluster and profiles are
+    resampled onto :data:`config.NOMINAL_SCHEDULE_H` instead."""
+
+    max_gap_h: float | None = None
+    """When resampling, the widest bracket a grid value may be interpolated
+    across. ``None`` means no limit (clustered grids sit on real samples)."""
+
     @property
     def n_points(self) -> int:
         return len(self.times_h)
@@ -134,6 +142,32 @@ def build_time_grid(
             "and re-run."
         )
 
+    if len(canonical) > config.MAX_GRID_POINTS:
+        # Continuous logging, not manual pulls: there is no nominal schedule to
+        # recover, and a grid of hundreds of points differs for every method
+        # revision. Resample onto the fixed schedule instead, within the span
+        # the data actually cover.
+        top = float(distinct_raw[-1])
+        nominal = np.array([t for t in config.NOMINAL_SCHEDULE_H if t <= top + 1e-9])
+        return TimeGrid(
+            times_h=nominal,
+            n_raw_times=len(distinct_raw),
+            n_distinct_vectors=len(signatures),
+            max_shift_h=0.0,
+            collapsed=False,
+            notes=(
+                f"{len(distinct_raw)} distinct timestamps across {len(signatures)} time "
+                f"vectors would give a {len(canonical)}-point comparison grid, so the "
+                "data are treated as continuously logged. Each replicate is resampled "
+                f"onto a {len(nominal)}-point nominal schedule by linear interpolation "
+                f"between its own readings, never across a gap wider than "
+                f"{config.MAX_INTERP_GAP_H:g} h and never beyond its measured range. "
+                "Per-profile metrics and fits still use every measured point.",
+            ),
+            resampled=True,
+            max_gap_h=config.MAX_INTERP_GAP_H,
+        )
+
     return TimeGrid(
         times_h=canonical,
         n_raw_times=len(distinct_raw),
@@ -145,7 +179,10 @@ def build_time_grid(
 
 
 def project_onto_grid(
-    times_h: np.ndarray, values: np.ndarray, grid: np.ndarray
+    times_h: np.ndarray,
+    values: np.ndarray,
+    grid: np.ndarray,
+    max_gap_h: float | None = None,
 ) -> np.ndarray:
     """Interpolate one profile onto ``grid``, without extrapolating.
 
@@ -153,6 +190,10 @@ def project_onto_grid(
     being filled with the nearest value — a profile that stopped at 12 h has no
     opinion about 24 h, and inventing one would be exactly the silent
     extrapolation G3 forbids.
+
+    With ``max_gap_h``, a grid point whose bracketing readings are further apart
+    than that is also left NaN: a straight line across a hole in the record is
+    a guess, not an interpolation.
     """
     t = np.asarray(times_h, dtype=float).reshape(-1)
     y = np.asarray(values, dtype=float).reshape(-1)
@@ -167,7 +208,27 @@ def project_onto_grid(
     out = np.interp(grid, t, y, left=np.nan, right=np.nan)
     # np.interp clamps rather than extrapolating; make out-of-range explicit.
     out = np.where((grid < t[0] - 1e-12) | (grid > t[-1] + 1e-12), np.nan, out)
+    if max_gap_h is not None and t.size > 1:
+        out = np.where(bracket_gaps(t, grid) > max_gap_h + 1e-12, np.nan, out)
     return out
+
+
+def bracket_gaps(times_h: np.ndarray, grid: np.ndarray) -> np.ndarray:
+    """Distance between the readings either side of each grid point.
+
+    Zero where a reading sits exactly on the grid point; ``inf`` outside the
+    measured range. This is how far each interpolated value had to reach.
+    """
+    t = np.unique(np.asarray(times_h, dtype=float)[np.isfinite(times_h)])
+    g = np.asarray(grid, dtype=float)
+    if t.size == 0:
+        return np.full(g.shape, np.inf)
+    hi = np.clip(np.searchsorted(t, g, side="left"), 0, t.size - 1)
+    lo = np.clip(hi - 1, 0, t.size - 1)
+    exact = np.isclose(t[hi], g, rtol=0.0, atol=1e-12)
+    gaps = np.where(exact, 0.0, t[hi] - t[lo])
+    outside = (g < t[0] - 1e-12) | (g > t[-1] + 1e-12)
+    return np.where(outside, np.inf, gaps)
 
 
 def paired_finite(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

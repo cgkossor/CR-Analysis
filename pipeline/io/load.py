@@ -67,6 +67,9 @@ class Database:
     vessel_volume_ml: float = config.VESSEL_VOLUME_ML
     schema: DissolutionSchema | None = None
 
+    rows_beyond_window: int = 0
+    """Readings dropped for lying past :data:`config.ANALYSIS_WINDOW_H`."""
+
 
 def _find_sheet(sheets: list[str], *candidates: str) -> str | None:
     for candidate in candidates:
@@ -219,6 +222,7 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
 
     long = long.sort_values(["id", "replicate", "time_h"], kind="mergesort").reset_index(drop=True)
     long = long[list(LONG_COLUMNS)]
+    long, beyond = _apply_window(long, config.ANALYSIS_WINDOW_H)
 
     design_spec: pd.DataFrame | None = None
     viscosity: dict[str, float] = {}
@@ -258,4 +262,22 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
         source_path=src,
         vessel_volume_ml=volume,
         schema=schema,
+        rows_beyond_window=beyond,
     )
+
+
+def _apply_window(long: pd.DataFrame, window_h: float) -> tuple[pd.DataFrame, int]:
+    """Trim each replicate to the analysis window, keeping one reading past it.
+
+    Some runs are extended past the window for diagnostics; those readings are
+    not part of the analysis. The first reading after the window end is kept so
+    the value at exactly ``window_h`` can be interpolated -- otherwise a run
+    whose nearest reading is at 24.02 h would lose its 24 h value entirely.
+    """
+    keys = [long["id"], long["replicate"]]
+    past = long["time_h"] > window_h + 1e-9
+    first_past = past & ~past.groupby(keys).shift(fill_value=False)
+    on_end = (long["time_h"] - window_h).abs() <= 1e-9
+    has_end = on_end.groupby(keys).transform("any")
+    keep = ~past | (first_past & ~has_end)
+    return long[keep].reset_index(drop=True), int((~keep).sum())
