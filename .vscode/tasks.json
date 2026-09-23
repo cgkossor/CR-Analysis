@@ -36,6 +36,26 @@
       "presentation": { "reveal": "always", "panel": "dedicated" }
     },
     {
+      "label": "Disintegration: make synthetic workbook",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": [
+        "-m", "pipeline.disintegration.synthetic",
+        "--input", "${input:databaseFile}",
+        "--output", "outputs/synthetic/CR_with_DT_SYNTHETIC.xlsx"
+      ],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Disintegration: analyse a database",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "pipeline.disintegration", "--input", "${input:databaseFile}"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
       "label": "Run tests",
       "type": "shell",
       "command": "${command:python.interpreterPath}",

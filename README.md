@@ -57,6 +57,55 @@ grammar that has no room for data. An ingest rejection is reported as
 `schema_error_code`; the codes are listed in
 `pipeline/io/schema.py:SCHEMA_ERROR_CODES`.
 
+## Disintegration time (optional section)
+
+If the workbook has a `Disintegration` sheet, `pipeline.run` also analyses it.
+To run this section on its own:
+
+```bash
+python -m pipeline.disintegration --input "<database.xlsx>" [--formats png,pdf,svg,tiff]
+```
+
+**Sheet layout.** One row per formulation, in the same form as the dissolution sheet:
+
+- `ID`, `Case`, `API`, `HPMC Grade`
+- `API [wt%]`, `HPMC [wt%]`, `Lactose [wt%]`
+- `DT_1 [min]` … `DT_4 [min]`, one column per replicate. The unit is read from the header and may be `s`, `min` or `h`.
+- An optional `Test_end [min]`.
+
+A blank cell means that replicate was not run. A value written `>1440`, or one
+at or past the test end, is right-censored: the tablet had not disintegrated
+when the test stopped. Censored values are kept and flagged, and excluded from
+the models.
+
+**What it produces:**
+
+- `outputs/reports/disintegration.md`
+- `disintegration_diagnostics.{md,json}`
+- figures DT-01 … DT-08 in `outputs/figures/disintegration/`, with `captions.md`
+- a privacy-safe `[T]` block in the audit
+
+The analyses are:
+
+- correlation of DT with every dissolution response
+- Deming regression of DT on the Weibull time scale
+- ANCOVA by grade
+- grade ratios at identical composition, from the randomised-block model `ln DT ~ grade + case` with Tukey intervals
+- erosion lag DT/Td
+- the classical DoE fitted to DT
+- leave-one-out comparison of recipe-only and dissolution-only prediction
+
+**Synthetic data.** There is no real DT data yet. To create a synthetic workbook:
+
+```bash
+python -m pipeline.disintegration.synthetic --input "<database.xlsx>"
+```
+
+This writes a copy of the workbook to `outputs/synthetic/CR_with_DT_SYNTHETIC.xlsx`,
+with DT generated from the workbook's own dissolution. The true parameters are
+stored in the `Disintegration_Notes` sheet, and `tests/test_disintegration.py`
+checks that the analysis recovers them.
+
 ## Verification
 
 ```bash
