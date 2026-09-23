@@ -1,7 +1,7 @@
 """Run the disintegration section on its own.
 
     python -m pipeline.disintegration --input <workbook.xlsx> [--outputs outputs]
-        [--skip-figures] [--formats png,pdf,svg,tiff]
+        [--disintegration <dt_file.xlsx>] [--skip-figures] [--formats png,pdf,svg,tiff]
 
 Writes ``<outputs>/reports/disintegration.md``, the diagnostics (``.md`` +
 ``.json``), and DT-01 … DT-08 in ``<outputs>/figures/disintegration/``. The
@@ -78,7 +78,14 @@ def _formats(text: str) -> tuple[str, ...]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m pipeline.disintegration",
                                      description=__doc__)
-    parser.add_argument("--input", required=True, help="workbook with a Disintegration sheet")
+    parser.add_argument(
+        "--input", required=True,
+        help="the dissolution workbook (which may also hold a Disintegration sheet)",
+    )
+    parser.add_argument(
+        "--disintegration", metavar="FILE",
+        help="a separate workbook holding the disintegration data",
+    )
     parser.add_argument("--outputs", default="outputs")
     parser.add_argument("--skip-figures", action="store_true")
     parser.add_argument("--formats", type=_formats, default=("png",),
@@ -90,8 +97,13 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         analysis = run_analysis(load_database(args.input))
-        r = run_section(analysis, args.input, Path(args.outputs),
-                        figures=not args.skip_figures, formats=args.formats)
+        dt_file = args.disintegration
+        data = load_disintegration(dt_file or args.input, dedicated=dt_file is not None)
+        r = run_section(
+            analysis, dt_file or args.input, Path(args.outputs),
+            figures=not args.skip_figures, formats=args.formats,
+            result=run_disintegration(analysis, data) if data is not None else None,
+        ) if data is not None else None
     except SchemaError as exc:
         print(f"INGEST FAILED (code {exc.code}): {exc}", file=sys.stderr)
         return 2

@@ -222,7 +222,8 @@ def test_audit_section_is_integers_only_and_leaks_nothing(workbook: Path, analys
 def test_audit_section_without_the_sheet(analysis: Any) -> None:
     report = AuditReport()
     audit_disintegration(report, _database(), analysis)
-    assert [e.label for e in report.entries] == ["sheet_present"]
+    assert [e.label for e in report.entries] == ["separate_file", "sheet_present"]
+    assert report.get("separate_file") == 0
     assert report.get("sheet_present") == 0
 
 

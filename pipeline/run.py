@@ -57,6 +57,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--skip-figures", action="store_true", help="skip figure rendering"
     )
     parser.add_argument(
+        "--disintegration",
+        metavar="FILE",
+        help=(
+            "a separate workbook holding the disintegration data. Without it, a "
+            "Disintegration sheet inside --input is used when there is one"
+        ),
+    )
+    parser.add_argument(
         "--audit",
         action="store_true",
         help=(
@@ -88,12 +96,18 @@ def _stress(analysis: Analysis) -> StressTest:
     )
 
 
-def _disintegration(analysis: Analysis, source: str) -> DisintegrationAnalysis | None:
-    """The disintegration section's result, or None when the workbook has no sheet."""
+def _disintegration(
+    analysis: Analysis, source: str, dt_file: str | None = None
+) -> DisintegrationAnalysis | None:
+    """The disintegration section's result, or None when there is no data.
+
+    Read from ``dt_file`` when one is given, otherwise from a Disintegration
+    sheet inside the dissolution workbook.
+    """
     from pipeline.disintegration.analysis import run_disintegration
     from pipeline.disintegration.load import load_disintegration
 
-    data = load_disintegration(source)
+    data = load_disintegration(dt_file or source, dedicated=dt_file is not None)
     return run_disintegration(analysis, data) if data is not None else None
 
 
@@ -103,10 +117,13 @@ def _payload(
     diagnostics: Diagnostics,
     source: str,
     disintegration: DisintegrationAnalysis | None = None,
+    dt_file: str | None = None,
 ) -> tuple[dict[str, Any], AuditReport]:
     """The dashboard payload, carrying its own audit for the Admin tab."""
     payload = build_payload(analysis, stress, diagnostics, disintegration)
-    audit = run_audit(source, analysis=analysis, stress=stress, payload=payload)
+    audit = run_audit(
+        source, analysis=analysis, stress=stress, payload=payload, disintegration=dt_file
+    )
     payload["audit"] = audit.as_payload()
     return payload, audit
 
@@ -165,7 +182,9 @@ def main(argv: list[str] | None = None) -> int:
         # The run died, but the audit isolates each stage and so can still say
         # where. Printed before the traceback propagates.
         if args.audit:
-            _print_audit(run_audit(args.input), Path(args.outputs))
+            _print_audit(
+                run_audit(args.input, disintegration=args.disintegration), Path(args.outputs)
+            )
         raise
 
 
@@ -178,7 +197,9 @@ def _run(args: argparse.Namespace) -> int:
     except SchemaError as exc:
         print(f"INGEST FAILED: {exc}", file=sys.stderr)
         if args.audit:
-            _print_audit(run_audit(args.input), Path(args.outputs))
+            _print_audit(
+                run_audit(args.input, disintegration=args.disintegration), Path(args.outputs)
+            )
         return 2
 
     analysis = run_analysis(db)
@@ -207,12 +228,21 @@ def _run(args: argparse.Namespace) -> int:
     # sheet. Before the payload, so the dashboard gets its tab.
     from pipeline.disintegration.__main__ import run_section as run_disintegration_section
 
+    try:
+        dt_result = _disintegration(analysis, args.input, args.disintegration)
+    except SchemaError as exc:
+        # A problem in the disintegration data must not cost the dissolution
+        # analysis. Say so loudly and carry on without the section.
+        print(f"DISINTEGRATION SKIPPED (code {exc.code}): {exc}", file=sys.stderr)
+        dt_result = None
     dt = run_disintegration_section(
-        analysis, args.input, out_root, figures=not args.skip_figures,
-        result=_disintegration(analysis, args.input),
-    )
+        analysis, args.disintegration or args.input, out_root,
+        figures=not args.skip_figures, result=dt_result,
+    ) if dt_result is not None else None
 
-    payload, audit = _payload(analysis, stress, diagnostics, args.input, dt)
+    payload, audit = _payload(
+        analysis, stress, diagnostics, args.input, dt, args.disintegration
+    )
     data_path = write_data_js(payload, Path(args.dashboard) / "data.js")
     print(f"Dashboard data -> {data_path}")
 
@@ -236,7 +266,9 @@ def _run(args: argparse.Namespace) -> int:
             again = write_data_js(
                 _payload(
                     repeat, repeat_stress, repeat_diag, args.input,
-                    _disintegration(repeat, args.input),
+                    _disintegration(repeat, args.input, args.disintegration)
+                    if dt is not None else None,
+                    args.disintegration,
                 )[0],
                 Path(tmp) / "data.js",
             )

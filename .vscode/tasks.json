@@ -5,72 +5,184 @@
       "label": "1. Install dependencies (once)",
       "type": "shell",
       "command": "${command:python.interpreterPath}",
-      "args": ["-m", "pip", "install", "-r", "requirements.txt"],
+      "args": [
+        "-m",
+        "pip",
+        "install",
+        "-r",
+        "requirements.txt"
+      ],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated" }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     },
     {
       "label": "2. Run analysis on a database",
       "type": "shell",
       "command": "${command:python.interpreterPath}",
-      "args": ["-m", "pipeline.run", "--input", "${input:databaseFile}"],
+      "args": [
+        "-m",
+        "pipeline.run",
+        "--input",
+        "${input:databaseFile}"
+      ],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated" },
-      "group": { "kind": "build", "isDefault": true }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "2b. Run analysis with a separate disintegration file",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": [
+        "-m",
+        "pipeline.run",
+        "--input",
+        "${input:databaseFile}",
+        "--disintegration",
+        "${input:disintegrationFile}"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     },
     {
       "label": "3. Open the dashboard",
       "type": "shell",
-      "windows": { "command": "start", "args": ["", "dashboard\\index.html"] },
-      "osx": { "command": "open", "args": ["dashboard/index.html"] },
-      "linux": { "command": "xdg-open", "args": ["dashboard/index.html"] },
+      "windows": {
+        "command": "start",
+        "args": [
+          "",
+          "dashboard\\index.html"
+        ]
+      },
+      "osx": {
+        "command": "open",
+        "args": [
+          "dashboard/index.html"
+        ]
+      },
+      "linux": {
+        "command": "xdg-open",
+        "args": [
+          "dashboard/index.html"
+        ]
+      },
       "problemMatcher": [],
-      "presentation": { "reveal": "silent" }
+      "presentation": {
+        "reveal": "silent"
+      }
     },
     {
       "label": "4. Audit a database (privacy-safe, shareable)",
       "type": "shell",
       "command": "${command:python.interpreterPath}",
-      "args": ["-m", "pipeline.audit", "--input", "${input:databaseFile}"],
+      "args": [
+        "-m",
+        "pipeline.audit",
+        "--input",
+        "${input:databaseFile}"
+      ],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated" }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "4b. Audit with a separate disintegration file",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": [
+        "-m",
+        "pipeline.audit",
+        "--input",
+        "${input:databaseFile}",
+        "--disintegration",
+        "${input:disintegrationFile}"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     },
     {
       "label": "Disintegration: make synthetic workbook",
       "type": "shell",
       "command": "${command:python.interpreterPath}",
       "args": [
-        "-m", "pipeline.disintegration.synthetic",
-        "--input", "${input:databaseFile}",
-        "--output", "outputs/synthetic/CR_with_DT_SYNTHETIC.xlsx"
+        "-m",
+        "pipeline.disintegration.synthetic",
+        "--input",
+        "${input:databaseFile}",
+        "--output",
+        "outputs/synthetic/CR_with_DT_SYNTHETIC.xlsx"
       ],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated" }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     },
     {
       "label": "Disintegration: analyse a database",
       "type": "shell",
       "command": "${command:python.interpreterPath}",
-      "args": ["-m", "pipeline.disintegration", "--input", "${input:databaseFile}"],
+      "args": [
+        "-m",
+        "pipeline.disintegration",
+        "--input",
+        "${input:databaseFile}"
+      ],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated" }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     },
     {
       "label": "Run tests",
       "type": "shell",
       "command": "${command:python.interpreterPath}",
-      "args": ["-m", "pytest", "-q"],
+      "args": [
+        "-m",
+        "pytest",
+        "-q"
+      ],
       "problemMatcher": [],
-      "group": { "kind": "test", "isDefault": true },
-      "presentation": { "reveal": "always", "panel": "dedicated" }
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     },
     {
       "label": "Build email packages",
       "type": "shell",
       "command": "${command:python.interpreterPath}",
-      "args": ["-m", "pipeline.package"],
+      "args": [
+        "-m",
+        "pipeline.package"
+      ],
       "problemMatcher": [],
-      "presentation": { "reveal": "always", "panel": "dedicated" }
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
     }
   ],
   "inputs": [
@@ -79,6 +191,12 @@
       "type": "promptString",
       "description": "Path to the dissolution workbook (.xlsx)",
       "default": "CR_matrix_tablet_dissolution_PLACEHOLDER (1).xlsx"
+    },
+    {
+      "id": "disintegrationFile",
+      "type": "promptString",
+      "description": "Path to the disintegration workbook (.xlsx)",
+      "default": ""
     }
   ]
 }

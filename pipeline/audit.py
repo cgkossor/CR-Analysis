@@ -984,8 +984,13 @@ def run_audit(
     analysis: Analysis | None = None,
     stress: StressTest | None = None,
     payload: dict[str, Any] | None = None,
+    disintegration: str | Path | None = None,
 ) -> AuditReport:
-    """Audit ``path``, reusing any objects a caller has already computed."""
+    """Audit ``path``, reusing any objects a caller has already computed.
+
+    ``disintegration`` is a separate workbook of disintegration data, when the
+    data are not in a sheet of ``path``.
+    """
     src = Path(path)
     report = AuditReport(commit=_commit())
 
@@ -1026,7 +1031,12 @@ def run_audit(
     # Imported here: the disintegration section imports this module's types.
     from pipeline.disintegration.audit import audit_disintegration
 
-    _run_stage(report, "T", lambda: audit_disintegration(report, src, a))
+    dt_src = Path(disintegration) if disintegration is not None else src
+    _run_stage(
+        report,
+        "T",
+        lambda: audit_disintegration(report, dt_src, a, dedicated=disintegration is not None),
+    )
     if stress is not None:
         s: StressTest = stress
         _run_stage(report, "O", lambda: _payload(report, a, s, payload))
@@ -1056,12 +1066,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--input", required=True, help="path to the dissolution workbook")
     parser.add_argument(
+        "--disintegration",
+        metavar="FILE",
+        help="a separate workbook holding the disintegration data, if any",
+    )
+    parser.add_argument(
         "--out",
         default=str(DEFAULT_OUT),
         help=f"text file to save the report to (default: {DEFAULT_OUT.as_posix()})",
     )
     args = parser.parse_args(argv)
-    report = run_audit(args.input)
+    report = run_audit(args.input, disintegration=args.disintegration)
     print(report.render())
     print(f"\nSaved to {save(report, args.out)}")
     return 0

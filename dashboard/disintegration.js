@@ -54,9 +54,10 @@
       "Replicate agreement runs from 0 to 1; above 0.9 means the tablets of one " +
       "formulation agree closely. Rank correlation runs from -1 to 1; near 1 means " +
       "formulations that dissolve slowly also disintegrate slowly." +
-      (isNum(X.test_end_h) ? " The test was stopped at " + fmt(X.test_end_h, 1) +
-        " h; tablets still intact then are shown as open circles and left out of " +
-        "the models." : "")));
+      (s.censored_replicates > 0
+        ? " Tablets still intact when the test stopped are shown as open circles and " +
+          "left out of the models."
+        : "")));
 
     host.appendChild(scatter(X, api, D));
 

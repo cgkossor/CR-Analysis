@@ -29,13 +29,17 @@ def _flag(x: float, test: bool) -> bool:
     return bool(np.isfinite(x) and test)
 
 
-def audit_disintegration(report: AuditReport, path: Path, analysis: Analysis | None) -> None:
+def audit_disintegration(
+    report: AuditReport, path: Path, analysis: Analysis | None, *, dedicated: bool = False
+) -> None:
     """Add the T entries. Raises on failure, so ``_run_stage`` can locate it."""
     add = report.add
-    data = load_disintegration(path)
+    add(SECTION, "separate_file", dedicated)
+    data = load_disintegration(path, dedicated=dedicated)
     add(SECTION, "sheet_present", data is not None)
     if data is None:
         return
+    add(SECTION, "per_tablet_rows", data.per_tablet_rows)
 
     long = data.long
     add(SECTION, "rows", data.n_rows)
