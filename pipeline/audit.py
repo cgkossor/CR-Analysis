@@ -74,6 +74,7 @@ SECTIONS: dict[str, str] = {
     "L": "doe",
     "M": "formulator",
     "N": "response space",
+    "T": "disintegration",
     "O": "dashboard payload",
 }
 
@@ -1022,6 +1023,10 @@ def run_audit(
     _run_stage(report, "L", lambda: _doe(report, a))
     _run_stage(report, "M", lambda: _formulator(report, a))
     _run_stage(report, "N", lambda: _response_space(report, a))
+    # Imported here: the disintegration section imports this module's types.
+    from pipeline.disintegration.audit import audit_disintegration
+
+    _run_stage(report, "T", lambda: audit_disintegration(report, src, a))
     if stress is not None:
         s: StressTest = stress
         _run_stage(report, "O", lambda: _payload(report, a, s, payload))
