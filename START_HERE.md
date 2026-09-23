@@ -92,6 +92,21 @@ Then open `dashboard/index.html` — double-click it in the file explorer, or ru
 is modelled and tells you what was found, what is missing, and every anomaly
 detected. If the database is not what you expected, that report says so.
 
+### Reporting back without sharing the data
+
+If the data cannot leave this machine, run **Tasks: Run Task → 4. Audit a
+database (privacy-safe, shareable)**, or:
+
+```
+python -m pipeline.audit --input "your_database.xlsx"
+```
+
+It prints a report made only of true/false flags and whole numbers, and saves
+the same text to `outputs/reports/audit.txt`. Nothing in it is a measurement, a
+name, a column header or an ID, so the file or its contents can be shared. The
+dashboard's **Admin / Audit** tab has the same report behind a **Copy report**
+button.
+
 ## Running the tests
 
 `Ctrl+Shift+P` → **Tasks: Run Task → Run tests**, or use VS Code's Testing panel

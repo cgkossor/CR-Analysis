@@ -28,6 +28,14 @@
       "presentation": { "reveal": "silent" }
     },
     {
+      "label": "4. Audit a database (privacy-safe, shareable)",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "pipeline.audit", "--input", "${input:databaseFile}"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
       "label": "Run tests",
       "type": "shell",
       "command": "${command:python.interpreterPath}",

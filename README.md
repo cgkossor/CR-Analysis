@@ -32,6 +32,31 @@ One command regenerates every artifact from the raw file:
 Then open `dashboard/index.html` by double-clicking it. No server, no build
 step, no internet connection.
 
+## Auditing a database you cannot share
+
+```bash
+python -m pipeline.audit --input "<database.xlsx>"
+```
+
+This prints a report of **booleans and integers only**: counts, flags, enum
+codes and the line numbers of any crash. It contains no measured value, name,
+header, ID or file name, so it can be copied off the machine that holds the
+data. It is also saved to `outputs/reports/audit.txt` (gitignored; choose
+another path with `--out`). Every stage runs in isolation: if one fails, the
+report says where and the later stages still run. `python -m pipeline.run ...
+--audit` appends the same block to a normal run, or prints it in place of a
+failed one.
+
+The dashboard's **Admin / Audit** tab shows the same report, plus a browser
+half (which tabs rendered, which charts came up empty, whether the model
+evaluates). **Copy report** puts both on the clipboard.
+
+The guarantee is enforced in code. `AuditReport.add` rejects anything that is
+not a `bool` or `int`, and `tests/test_audit.py` holds every rendered line to a
+grammar that has no room for data. An ingest rejection is reported as
+`schema_error_code`; the codes are listed in
+`pipeline/io/schema.py:SCHEMA_ERROR_CODES`.
+
 ## Verification
 
 ```bash
