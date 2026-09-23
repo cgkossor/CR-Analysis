@@ -17,6 +17,18 @@ sheet)::
 
 A workbook without the sheet returns ``None``. The rest of the pipeline then
 skips this section.
+
+A second layout is also read, one row per tablet, as a separate file usually
+holds it::
+
+    ID | Case | API | HPMC Grade | API [wt%] | HPMC [wt%] | Lactose [wt%] |
+    Replicate | Mass [mg] | Thickness [mm] |
+    Disintegration Time [hr] | Disintegration Time [min] | Disintegration Time [sec]
+
+The time columns are the parts of one time (1 h 23 min 10 s) and are added
+up. Any one of them may be omitted or left blank. A tablet is censored only
+where a cell is marked ``>``: this layout carries no test end, so no time is
+treated as "still intact" merely for being long.
 """
 
 from __future__ import annotations
@@ -43,6 +55,15 @@ UNIT_CODES: dict[float, int] = {1 / 3600: 1, 1 / 60: 2, 1.0: 3}
 
 _DT_RE = re.compile(r"^(?:dt|disintegration(?:[_\s]*time)?)[_\s]*(\d+)(?!\d)", re.IGNORECASE)
 _END_RE = re.compile(r"^test[_\s]*end", re.IGNORECASE)
+#: Per-tablet layout: a replicate-number column, and time columns carrying a
+#: unit but no replicate index. "Disentegration" is accepted as spelt in the
+#: lab's own files.
+_REP_COL_RE = re.compile(
+    r"^rep(?:licate)?(?:[_\s]*(?:no\.?|num(?:ber)?|#))?$", re.IGNORECASE
+)
+_PART_RE = re.compile(r"^(?:dt|dis[ie]nt[ae]gration(?:[_\s]*time)?)\s*[\[(]", re.IGNORECASE)
+#: Measured alongside the time in the per-tablet layout; read past, not flagged.
+_TABLET_EXTRA_RE = re.compile(r"^(mass|weight|thickness|hardness|diameter)\b", re.IGNORECASE)
 _COMP_RE = re.compile(r"^(api|hpmc|lactose)\s*\[?\s*(wt\s*%|%|w/w)", re.IGNORECASE)
 _ROLES: dict[str, tuple[str, int]] = {
     "id": (r"^id$", 101),
@@ -81,6 +102,8 @@ class DisintegrationData:
     """Cells that were neither blank, a number, nor a ``>`` censoring mark."""
     n_nonpositive: int = 0
     has_api_column: bool = False
+    per_tablet_rows: bool = False
+    """True for the one-row-per-tablet layout (``Replicate`` column)."""
 
     @property
     def unit_code(self) -> int:
@@ -154,18 +177,32 @@ def _read_truth(path: Path, sheet: str) -> tuple[bool, dict[str, float]]:
     return synthetic, truth
 
 
-def load_disintegration(path: str | Path) -> DisintegrationData | None:
-    """Load the sheet, or return ``None`` when the workbook has none."""
+def load_disintegration(
+    path: str | Path, *, dedicated: bool = False
+) -> DisintegrationData | None:
+    """Load the sheet, or return ``None`` when the workbook has none.
+
+    ``dedicated`` means the file was given as the disintegration file in its own
+    right, so when no sheet carries a disintegration name the first sheet is
+    read instead of concluding there is no data.
+    """
     src = Path(path)
     sheets = list(pd.ExcelFile(src).sheet_names)
     sheet = find_sheet(sheets, settings.SHEET_NAMES)
     if sheet is None:
-        return None
+        if not dedicated:
+            return None
+        sheet = sheets[0]
 
     frame = pd.read_excel(src, sheet_name=sheet)
     frame = frame.dropna(how="all")
     cols = [str(c) for c in frame.columns]
     frame.columns = cols
+
+    rep_hits = [c for c in cols if _REP_COL_RE.match(_norm(c))]
+    part_cols = [c for c in cols if _PART_RE.match(_norm(c))]
+    if rep_hits and part_cols:
+        return _load_per_tablet(src, sheets, frame, cols, rep_hits[0], part_cols)
 
     id_col = _role(cols, "id")
     case_col = _role(cols, "case")
@@ -284,4 +321,124 @@ def load_disintegration(path: str | Path) -> DisintegrationData | None:
         n_nonnumeric=n_nonnumeric,
         n_nonpositive=n_nonpositive,
         has_api_column=api_col is not None,
+    )
+
+
+def _load_per_tablet(
+    src: Path,
+    sheets: list[str],
+    frame: pd.DataFrame,
+    cols: list[str],
+    rep_col: str,
+    part_cols: list[str],
+) -> DisintegrationData:
+    """Read the one-row-per-tablet layout; see the module docstring."""
+    id_col = _role(cols, "id")
+    case_col = _role(cols, "case")
+    grade_col = _role(cols, "grade")
+    api_hits = [c for c in cols if re.fullmatch(r"api", _norm(c), re.IGNORECASE)]
+    api_col = api_hits[0] if len(api_hits) == 1 else None
+    comp_cols: dict[str, str] = {}
+    for c in cols:
+        m = _COMP_RE.match(_norm(c))
+        if m:
+            comp_cols[m.group(1).lower()] = c
+
+    factors = {c: _unit(c) for c in part_cols}
+    if any(f is None for f in factors.values()):
+        raise SchemaError(
+            "Disintegration sheet: cannot determine the time unit of "
+            f"{[c for c, f in factors.items() if f is None]}. Put it in the header, "
+            "e.g. 'Disintegration Time [min]'. The unit is never assumed.",
+            105,
+        )
+    if len(set(factors.values())) != len(factors):
+        raise SchemaError(
+            f"Disintegration sheet: two time columns share a unit {factors}. In the "
+            "one-row-per-tablet layout they are the h / min / s parts of one time.",
+            106,
+        )
+
+    known = {id_col, case_col, grade_col, rep_col, *comp_cols.values(), *part_cols}
+    known |= {c for c in cols if _TABLET_EXTRA_RE.match(_norm(c))}
+    if api_col is not None:
+        known.add(api_col)
+    unrecognised = [c for c in cols if c not in known]
+
+    records: list[dict[str, object]] = []
+    n_nonnumeric = 0
+    n_nonpositive = 0
+    for row in frame.itertuples(index=False):
+        values = dict(zip(cols, row, strict=True))
+        total = 0.0
+        any_value = False
+        censored = False
+        for c in part_cols:
+            val, cens, bad = _parse_cell(values[c])
+            n_nonnumeric += int(bad)
+            censored = censored or cens
+            if np.isfinite(val):
+                any_value = True
+                total += val * float(factors[c])  # type: ignore[arg-type]
+        if not any_value:
+            continue  # a tablet with no time recorded was not run
+        if total <= 0:
+            n_nonpositive += 1
+            continue
+        records.append(
+            {
+                "id": str(values[id_col]).strip(),
+                "api": str(values[api_col]).strip() if api_col else "",
+                "case": int(values[case_col]),
+                "grade": str(values[grade_col]).strip(),
+                "api_wt": float(values[comp_cols["api"]]) if "api" in comp_cols else np.nan,
+                "hpmc_wt": (
+                    float(values[comp_cols["hpmc"]]) if "hpmc" in comp_cols else np.nan
+                ),
+                "lactose_wt": (
+                    float(values[comp_cols["lactose"]]) if "lactose" in comp_cols else np.nan
+                ),
+                "replicate": int(values[rep_col]),
+                "dt_h": total,
+                "censored": bool(censored),
+            }
+        )
+
+    long = pd.DataFrame.from_records(records, columns=list(LONG_COLUMNS))
+    dup = long.duplicated(["id", "replicate"])
+    if dup.any():
+        raise SchemaError(
+            "Disintegration sheet: the same ID and replicate number appear on more "
+            f"than one row: {sorted(set(long.loc[dup, 'id']))[:5]}.",
+            108,
+        )
+    long = long.sort_values(["case", "grade", "replicate"], kind="mergesort").reset_index(
+        drop=True
+    )
+
+    synthetic = False
+    truth: dict[str, float] = {}
+    notes = find_sheet(sheets, settings.NOTES_SHEET_NAMES)
+    if notes is not None:
+        synthetic, truth = _read_truth(src, notes)
+
+    reps_per_id = long.groupby("id")["replicate"].nunique()
+    return DisintegrationData(
+        long=long,
+        unit_to_hours=1.0,
+        # No test end in this layout. The longest time recorded bounds the
+        # figures; nothing is censored by it.
+        test_end_h=float(long["dt_h"].max()) if len(long) else settings.DT_DEFAULT_TEST_END_H,
+        test_end_from_sheet=False,
+        is_synthetic=synthetic,
+        truth=truth,
+        n_rows=len(frame),
+        n_columns=len(cols),
+        n_replicate_columns=int(reps_per_id.max()) if len(reps_per_id) else 0,
+        n_unrecognised_columns=len(unrecognised),
+        n_composition_columns=len(comp_cols),
+        n_nonnumeric=n_nonnumeric,
+        n_nonpositive=n_nonpositive,
+        has_api_column=api_col is not None,
+        per_tablet_rows=True,
     )

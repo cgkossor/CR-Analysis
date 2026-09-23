@@ -37,9 +37,15 @@ def collect(r: DisintegrationAnalysis) -> Diagnostics:
     d.add(s, "replicate columns found", "PASS", data.n_replicate_columns)
     d.add(s, "time unit", "PASS", {1: "s", 2: "min", 3: "h"}.get(data.unit_code, "?"),
           "read from the column header, converted to hours")
-    d.add(s, "test end (h)", "PASS" if data.test_end_from_sheet else "WARN", data.test_end_h,
-          "" if data.test_end_from_sheet else
-          f"no Test_end column; assumed {settings.DT_DEFAULT_TEST_END_H:g} h for censoring")
+    if data.per_tablet_rows:
+        d.add(s, "layout", "INFO", "one row per tablet",
+              "time columns added up as parts of one time; a tablet counts as still "
+              "intact only where a cell is marked '>'")
+    else:
+        d.add(s, "test end (h)", "PASS" if data.test_end_from_sheet else "WARN",
+              data.test_end_h,
+              "" if data.test_end_from_sheet else
+              f"no Test_end column; assumed {settings.DT_DEFAULT_TEST_END_H:g} h for censoring")
     d.add(s, "non-numeric cells", "WARN" if data.n_nonnumeric else "PASS", data.n_nonnumeric,
           "read as missing" if data.n_nonnumeric else "")
     d.add(s, "non-positive times", "FAIL" if data.n_nonpositive else "PASS", data.n_nonpositive,
