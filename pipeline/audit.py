@@ -413,6 +413,18 @@ def _preflight(r: AuditReport, path: Path) -> None:
     ci, mi = idx(sc._CONC_RE, conc), idx(sc._MASS_RE, mass)
     r.add("B", "replicate_indices_contiguous", ci == list(range(1, len(ci) + 1)))
     r.add("B", "mass_indices_match_conc", mi == ci)
+    ti = sorted(
+        int(m.group(2)) for c in time if (m := sc._TIME_IDX_RE.match(sc._norm(c))) is not None
+    )
+    r.add("B", "time_cols_indexed", len(ti))
+    r.add("B", "time_indices_match_conc", bool(ti) and set(ci) <= set(ti))
+    if len(time) > 1:
+        first = pd.to_numeric(frame[time[0]], errors="coerce")
+        r.add(
+            "B",
+            "time_cols_identical_to_first",
+            sum(1 for c in time[1:] if first.equals(pd.to_numeric(frame[c], errors="coerce"))),
+        )
 
     # --- cell-level content, per role -------------------------------------
     id_col = found["id"]
@@ -496,6 +508,13 @@ def _ingest(r: AuditReport, path: Path, db: Database | None) -> Database:
     r.add("C", "replicates_in_schema", db.schema.n_replicates if db.schema else -1)
     r.add(
         "C",
+        "time_per_replicate",
+        bool(db.schema and all(rep.time for rep in db.schema.replicates)),
+    )
+    r.add("C", "analysis_window_h", math.floor(config.ANALYSIS_WINDOW_H))
+    r.add("C", "rows_beyond_window_dropped", db.rows_beyond_window)
+    r.add(
+        "C",
         "time_unit_enum_1min_2h",
         0 if db.schema is None else (1 if db.schema.time_to_hours < 1 else 2),
     )
@@ -555,6 +574,7 @@ def _raw_values(r: AuditReport, db: Database) -> None:
     uniq = p.drop_duplicates(comp_cols)[comp_cols].dropna()
     sums = uniq.sum(axis=1)
     r.add("D", "distinct_compositions", len(uniq))
+    r.add("D", "compositions_sum_off_100_gt_0p05", int(((sums - 100).abs() > 0.05).sum()))
     r.add("D", "compositions_sum_off_100_gt_0p5", int(((sums - 100).abs() > 0.5).sum()))
     r.add("D", "compositions_sum_off_100_gt_5", int(((sums - 100).abs() > 5).sum()))
     r.add("D", "composition_sum_floor", math.floor(sums.min()) if len(sums) else -1)
@@ -614,6 +634,32 @@ def _time(r: AuditReport, db: Database) -> None:
     r.add("E", "grid_collapsed", grid.collapsed)
     r.add("E", "grid_nonfinite_points", int((~np.isfinite(grid.times_h)).sum()))
     r.add("E", "grid_covers_24h", bool(len(grid.times_h) and np.nanmax(grid.times_h) >= 24 - 1e-9))
+    r.add("E", "grid_resampled_to_nominal", grid.resampled)
+
+    # How far interpolation had to reach: the widest bracket around any grid
+    # point, per replicate, and how many grid points the gap guard blanked.
+    from pipeline.profiles.grid import bracket_gaps
+
+    widest = 0.0
+    blanked = 0
+    clocks_differ = 0
+    for _, g in db.profiles.groupby("id"):
+        vectors = [
+            np.sort(rep["time_h"].to_numpy(dtype=float)) for _, rep in g.groupby("replicate")
+        ]
+        clocks_differ += int(
+            any(len(v) != len(vectors[0]) or not np.allclose(v, vectors[0]) for v in vectors[1:])
+        )
+        for v in vectors:
+            gaps = bracket_gaps(v, grid.times_h)
+            inside = np.isfinite(gaps)
+            if inside.any():
+                widest = max(widest, float(gaps[inside].max()))
+            if grid.max_gap_h is not None:
+                blanked += int((inside & (gaps > grid.max_gap_h + 1e-12)).sum())
+    r.add("E", "interp_widest_bracket_min", math.ceil(widest * 60))
+    r.add("E", "grid_points_blanked_by_gap_guard", blanked)
+    r.add("E", "ids_where_replicate_clocks_differ", clocks_differ)
 
 
 def _release(r: AuditReport, db: Database, replicates: pd.DataFrame | None) -> pd.DataFrame:
