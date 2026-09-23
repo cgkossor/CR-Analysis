@@ -303,8 +303,23 @@ def save(
         _check_titles(fig, stem)
     out_dir.mkdir(parents=True, exist_ok=True)
     if banner:
+        # Below the lowest thing drawn, not at a fixed spot: a legend placed
+        # under the panels would otherwise sit on top of the banner.
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()  # type: ignore[attr-defined]  # Agg canvas
+        lowest = fig.get_tightbbox(renderer).y0 / fig.get_figheight()
+        # Freeze the layout just computed, and pin figure legends where they were
+        # drawn. bbox_inches="tight" temporarily moves the figure's bottom edge
+        # down to take in the banner, and a legend anchored to that edge would
+        # follow it down onto the banner. Figure-fraction coordinates do not move.
+        fig.set_layout_engine("none")
+        to_fig = fig.transFigure.inverted()
+        for legend in fig.legends:
+            box = legend.get_window_extent(renderer).transformed(to_fig)
+            legend.set_bbox_to_anchor(box, transform=fig.transFigure)
+            legend.set_loc("center")
         fig.text(
-            0.5, -0.005, banner, ha="center", va="top",
+            0.5, min(lowest, 0.0) - 0.01, banner, ha="center", va="top",
             fontsize=6.5, color="#B22222", fontweight="bold",
         )
     names: list[str] = []
