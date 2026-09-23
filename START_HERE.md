@@ -109,14 +109,32 @@ button.
 
 ### Disintegration time (optional)
 
-Add a sheet named `Disintegration` to the same workbook (layout in `README.md`)
-and run the normal command. The pipeline picks it up automatically:
+Either keep the disintegration data in their own workbook and point the run
+at it:
+
+```
+python -m pipeline.run --input "dissolution.xlsx" --disintegration "disintegration.xlsx"
+```
+
+or add a sheet named `Disintegration` to the dissolution workbook and run the
+normal command. A separate file is read from its first sheet, one row per
+tablet:
+
+`ID, Case, API, HPMC Grade, API [wt%], HPMC [wt%], Lactose [wt%], Replicate,
+Mass [mg], Thickness [mm], Disintegration Time [hr], Disintegration Time [min],
+Disintegration Time [sec]`
+
+The three time columns are added up (1 h + 23 min + 10 s). "Disentegration"
+is accepted as spelt. A tablet counts as still intact only where a cell says
+so with `>` (for example `>24` in the hour column).
+
+With either route:
 
 - the dashboard gains a **Disintegration** tab;
 - **Disintegration time** appears in the DoE tab's response list;
 - the audit gains a `[T]` section.
 
-Without the sheet, none of this appears and nothing else changes.
+Without disintegration data, none of this appears and nothing else changes.
 
 ### Commands at a glance
 
@@ -128,8 +146,10 @@ task under **Tasks: Run Task**.
 | Analyse a workbook and refresh the dashboard | `python -m pipeline.run --input "file.xlsx"` | 2 |
 | The same, faster (no figure files) | `python -m pipeline.run --input "file.xlsx" --skip-figures` | |
 | The same, and print the shareable audit at the end | `python -m pipeline.run --input "file.xlsx" --audit` | |
+| Analyse with disintegration data in their own file | `python -m pipeline.run --input "file.xlsx" --disintegration "dt.xlsx"` | 2b |
 | Audit only (shareable, no other outputs) | `python -m pipeline.audit --input "file.xlsx"` | 4 |
-| Disintegration section only | `python -m pipeline.disintegration --input "file.xlsx"` | Disintegration: analyse |
+| Audit, with a separate disintegration file | `python -m pipeline.audit --input "file.xlsx" --disintegration "dt.xlsx"` | 4b |
+| Disintegration section only | `python -m pipeline.disintegration --input "file.xlsx" [--disintegration "dt.xlsx"]` | Disintegration: analyse |
 | Make a synthetic workbook with a Disintegration sheet, for trying it out | `python -m pipeline.disintegration.synthetic --input "CR_matrix_tablet_dissolution_PLACEHOLDER (1).xlsx" --output outputs/synthetic/CR_with_DT_SYNTHETIC.xlsx` | Disintegration: make synthetic |
 | Open the dashboard | double-click `dashboard/index.html` | 3 |
 | Run the tests | `python -m pytest` | Run tests |

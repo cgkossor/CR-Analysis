@@ -60,13 +60,25 @@ grammar that has no room for data. An ingest rejection is reported as
 ## Disintegration time (optional section)
 
 If the workbook has a `Disintegration` sheet, `pipeline.run` also analyses it.
+When the data live in their own workbook, pass it with
+`--disintegration "<dt.xlsx>"` (accepted by `pipeline.run`, `pipeline.audit`
+and `pipeline.disintegration`). A separate file is read from its first sheet
+unless one is named `Disintegration`.
+
 To run this section on its own:
 
 ```bash
 python -m pipeline.disintegration --input "<database.xlsx>" [--formats png,pdf,svg,tiff]
 ```
 
-**Sheet layout.** One row per formulation, in the same form as the dissolution sheet:
+**Per-tablet layout** (usual for a separate file). One row per tablet:
+`ID`, `Case`, `API`, `HPMC Grade`, the three composition columns, `Replicate`,
+optional `Mass [mg]` / `Thickness [mm]`, and time columns such as
+`Disintegration Time [hr]`, `[min]` and `[sec]`. The time columns are the
+parts of one time and are added up. "Disentegration" is accepted. With no
+test-end column, a tablet is censored only where a cell is marked `>`.
+
+**Per-formulation layout.** One row per formulation, in the same form as the dissolution sheet:
 
 - `ID`, `Case`, `API`, `HPMC Grade`
 - `API [wt%]`, `HPMC [wt%]`, `Lactose [wt%]`
