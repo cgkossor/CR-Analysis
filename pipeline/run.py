@@ -197,6 +197,13 @@ def _run(args: argparse.Namespace) -> int:
         figures = render_all(analysis, stress, out_root / "figures")
         print(f"Figures -> {len(figures)} rendered in {out_root / 'figures'}")
 
+    # Optional section: runs only when the workbook carries a Disintegration sheet.
+    from pipeline.disintegration.__main__ import run_section as run_disintegration_section
+
+    run_disintegration_section(
+        analysis, args.input, out_root, figures=not args.skip_figures
+    )
+
     if args.check_determinism:
         first = hashlib.sha256(data_path.read_bytes()).hexdigest()
         # Re-run the whole chain from the raw file: a second pass must reproduce
