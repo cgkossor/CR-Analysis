@@ -107,6 +107,36 @@ name, a column header or an ID, so the file or its contents can be shared. The
 dashboard's **Admin / Audit** tab has the same report behind a **Copy report**
 button.
 
+### Disintegration time (optional)
+
+Add a sheet named `Disintegration` to the same workbook (layout in `README.md`)
+and run the normal command. The pipeline picks it up automatically:
+
+- the dashboard gains a **Disintegration** tab;
+- **Disintegration time** appears in the DoE tab's response list;
+- the audit gains a `[T]` section.
+
+Without the sheet, none of this appears and nothing else changes.
+
+### Commands at a glance
+
+Run these in the VS Code terminal, from the project folder. Each also has a
+task under **Tasks: Run Task**.
+
+| To do this | Run | Task |
+|---|---|---|
+| Analyse a workbook and refresh the dashboard | `python -m pipeline.run --input "file.xlsx"` | 2 |
+| The same, faster (no figure files) | `python -m pipeline.run --input "file.xlsx" --skip-figures` | |
+| The same, and print the shareable audit at the end | `python -m pipeline.run --input "file.xlsx" --audit` | |
+| Audit only (shareable, no other outputs) | `python -m pipeline.audit --input "file.xlsx"` | 4 |
+| Disintegration section only | `python -m pipeline.disintegration --input "file.xlsx"` | Disintegration: analyse |
+| Make a synthetic workbook with a Disintegration sheet, for trying it out | `python -m pipeline.disintegration.synthetic --input "CR_matrix_tablet_dissolution_PLACEHOLDER (1).xlsx" --output outputs/synthetic/CR_with_DT_SYNTHETIC.xlsx` | Disintegration: make synthetic |
+| Open the dashboard | double-click `dashboard/index.html` | 3 |
+| Run the tests | `python -m pytest` | Run tests |
+
+The dashboard always shows the last workbook `pipeline.run` was given. After
+trying the synthetic workbook, run your real one again before reading results.
+
 ## Running the tests
 
 `Ctrl+Shift+P` → **Tasks: Run Task → Run tests**, or use VS Code's Testing panel
