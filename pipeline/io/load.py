@@ -148,11 +148,11 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
     """
     src = Path(path)
     if not src.exists():
-        raise SchemaError(f"Input database not found: {src}")
+        raise SchemaError(f"Input database not found: {src}", 1)
 
     volume = config.VESSEL_VOLUME_ML if vessel_volume_ml is None else vessel_volume_ml
     if volume <= 0:
-        raise SchemaError(f"Vessel volume must be positive, got {volume}.")
+        raise SchemaError(f"Vessel volume must be positive, got {volume}.", 2)
 
     book = pd.ExcelFile(src)
     sheets = list(book.sheet_names)
@@ -161,7 +161,8 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
     if diss_sheet is None:
         raise SchemaError(
             f"No dissolution sheet found in {src.name}. Looked for a sheet named "
-            f"'Dissolution'/'Data'/'Profiles'; sheets present: {sheets}"
+            f"'Dissolution'/'Data'/'Profiles'; sheets present: {sheets}",
+            3,
         )
 
     frame = book.parse(diss_sheet)
@@ -171,7 +172,8 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
         raise SchemaError(
             "No tablet-mass columns found. Dose = mass x API fraction is required to "
             "convert the concentration column into % released; without it the profiles "
-            "cannot be normalised. Supply 'Mass_<rep>_mg' columns."
+            "cannot be normalised. Supply 'Mass_<rep>_mg' columns.",
+            30,
         )
 
     records: list[pd.DataFrame] = []
@@ -208,7 +210,8 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
         bad = long.loc[long["dose_mg"] <= 0, "id"].unique()[:5]
         raise SchemaError(
             f"Non-positive dose computed for id(s) {list(bad)}. Check tablet mass and "
-            "API wt% columns."
+            "API wt% columns.",
+            31,
         )
 
     # ug/mL * mL -> ug; /1000 -> mg; over dose in mg -> fraction; x100 -> percent.
@@ -235,7 +238,8 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
         raise SchemaError(
             f"No nominal viscosity for grade(s) {unmapped}. log10(viscosity) is a model "
             "factor (AC4), so an unmapped grade cannot be modelled. Add it to the "
-            "workbook's Design sheet or to config.FALLBACK_GRADE_VISCOSITY_CP."
+            "workbook's Design sheet or to config.FALLBACK_GRADE_VISCOSITY_CP.",
+            32,
         )
 
     is_synthetic = False

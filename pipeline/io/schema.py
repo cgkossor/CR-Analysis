@@ -26,7 +26,46 @@ class SchemaError(ValueError):
     Carries a specific, actionable message naming the offending column or
     expectation. Never raised for merely surprising *data* -- only for a shape
     the pipeline cannot interpret.
+
+    ``code`` identifies the rule that failed without quoting the message, which
+    names columns and IDs. It is what ``pipeline.audit`` reports; the table is
+    :data:`SCHEMA_ERROR_CODES`.
     """
+
+    def __init__(self, message: str, code: int = 0) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+#: Every rule that can reject a workbook, by the integer ``SchemaError.code``.
+SCHEMA_ERROR_CODES: Final[dict[int, str]] = {
+    0: "unclassified",
+    1: "input file not found",
+    2: "vessel volume not positive",
+    3: "no dissolution sheet",
+    11: "ID column missing",
+    12: "ID column ambiguous",
+    13: "case column missing",
+    14: "case column ambiguous",
+    15: "API name column missing",
+    16: "API name column ambiguous",
+    17: "HPMC grade column missing",
+    18: "HPMC grade column ambiguous",
+    20: "composition column(s) missing",
+    21: "no elapsed-time column",
+    22: "time unit not determinable",
+    23: "no concentration columns",
+    24: "concentration unit not determinable",
+    25: "concentration units inconsistent",
+    26: "mass unit not determinable",
+    27: "mass units inconsistent",
+    28: "replicate has concentration but no mass column",
+    30: "no tablet-mass columns",
+    31: "non-positive dose",
+    32: "grade without nominal viscosity",
+}
+
+_ROLE_CODES: Final[dict[str, int]] = {"ID": 11, "case": 13, "API name": 15, "HPMC grade": 17}
 
 
 # --- unit vocabularies ------------------------------------------------------
@@ -115,12 +154,14 @@ def _require(columns: list[str], pattern: str, label: str) -> str:
     if not hits:
         raise SchemaError(
             f"Required {label} column not found. Expected a header matching "
-            f"/{pattern}/i. Columns present: {columns}"
+            f"/{pattern}/i. Columns present: {columns}",
+            _ROLE_CODES.get(label, 0),
         )
     if len(hits) > 1:
         raise SchemaError(
             f"Ambiguous {label} column: {hits} all match /{pattern}/i. "
-            "Rename so exactly one column identifies it."
+            "Rename so exactly one column identifies it.",
+            _ROLE_CODES.get(label, 0) + 1,
         )
     return hits[0]
 
@@ -143,7 +184,8 @@ def detect_schema(frame: pd.DataFrame) -> DissolutionSchema:
     if missing:
         raise SchemaError(
             f"Missing composition column(s) for {sorted(missing)}. Expected headers like "
-            f"'API [wt%]'. Columns present: {cols}"
+            f"'API [wt%]'. Columns present: {cols}",
+            20,
         )
 
     # --- time -------------------------------------------------------------
@@ -151,7 +193,8 @@ def detect_schema(frame: pd.DataFrame) -> DissolutionSchema:
     if not time_candidates:
         raise SchemaError(
             f"No elapsed-time column found (expected a header starting with "
-            f"min/time/hour). Columns present: {cols}"
+            f"min/time/hour). Columns present: {cols}",
+            21,
         )
     time_col = time_candidates[0]
     time_factor = _extract_unit(time_col, _TIME_UNITS)
@@ -159,7 +202,8 @@ def detect_schema(frame: pd.DataFrame) -> DissolutionSchema:
         raise SchemaError(
             f"Cannot determine the unit of the time column {time_col!r}. Rename it to "
             "carry an explicit unit, e.g. 'Time_min' or 'Time [h]'. Elapsed time is "
-            "never assumed."
+            "never assumed.",
+            22,
         )
 
     # --- replicate families ----------------------------------------------
@@ -171,7 +215,8 @@ def detect_schema(frame: pd.DataFrame) -> DissolutionSchema:
     if not conc_by_idx:
         raise SchemaError(
             f"No concentration columns found (expected 'conc_1', 'conc_2', ...). "
-            f"Columns present: {cols}"
+            f"Columns present: {cols}",
+            23,
         )
 
     mass_by_idx = {
@@ -187,13 +232,15 @@ def detect_schema(frame: pd.DataFrame) -> DissolutionSchema:
         raise SchemaError(
             f"Cannot determine the concentration unit for {unresolved}. Expected the "
             "unit in the header, e.g. 'conc_1 [ug_ml]'. Guessing is not permitted: a "
-            "ug/mL vs mg/mL error rescales every release profile by 1000x."
+            "ug/mL vs mg/mL error rescales every release profile by 1000x.",
+            24,
         )
     distinct_conc = set(conc_factors.values())
     if len(distinct_conc) > 1:
         raise SchemaError(
             f"Concentration columns carry inconsistent units: {conc_factors}. "
-            "All replicates must report in the same unit."
+            "All replicates must report in the same unit.",
+            25,
         )
     conc_factor = distinct_conc.pop()
     assert conc_factor is not None  # narrowed by the `unresolved` check above
@@ -205,11 +252,12 @@ def detect_schema(frame: pd.DataFrame) -> DissolutionSchema:
         if unresolved_mass:
             raise SchemaError(
                 f"Cannot determine the tablet-mass unit for {unresolved_mass}. Expected "
-                "e.g. 'Mass_1_mg'. Mass sets the dose denominator, so it is never assumed."
+                "e.g. 'Mass_1_mg'. Mass sets the dose denominator, so it is never assumed.",
+                26,
             )
         distinct_mass = set(mass_factors.values())
         if len(distinct_mass) > 1:
-            raise SchemaError(f"Tablet-mass columns carry inconsistent units: {mass_factors}.")
+            raise SchemaError(f"Tablet-mass columns carry inconsistent units: {mass_factors}.", 27)
         resolved_mass = distinct_mass.pop()
         assert resolved_mass is not None
         mass_factor = resolved_mass
@@ -229,7 +277,8 @@ def detect_schema(frame: pd.DataFrame) -> DissolutionSchema:
         raise SchemaError(
             f"Replicate(s) {without_mass} have a concentration column but no tablet-mass "
             "column, while other replicates do. Dose cannot be computed for them. Supply "
-            "the missing mass column or remove the partial replicate."
+            "the missing mass column or remove the partial replicate.",
+            28,
         )
 
     return DissolutionSchema(
