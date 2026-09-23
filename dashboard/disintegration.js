@@ -59,6 +59,14 @@
           "left out of the models."
         : "")));
 
+    host.appendChild(el("h3", null, "Measured disintegration time by case"));
+    host.appendChild(el("p", { class: "hint" },
+      "Raw results, before any model. Each bar is the mean of that formulation's " +
+      "tablets with a line for \u00b11 standard deviation; each dot is one tablet. " +
+      "Hover a bar or dot for its value."));
+    host.appendChild(bars(X, api));
+
+    host.appendChild(el("h3", null, "Disintegration against dissolution"));
     host.appendChild(scatter(X, api, D));
 
     /* --- per-formulation table ------------------------------------------ */
@@ -149,6 +157,121 @@
     void esc; void svgEl; void Chart;
   }
 
+  var GRADE_COLOURS = { K100LV: "#3b7dd8", K4M: "#d9822b", K100M: "#8e5bb5" };
+  var SPARE_COLOURS = ["#2a9d8f", "#c0392b", "#6c757d"];
+  function gradeColour(g, i) { return GRADE_COLOURS[g] || SPARE_COLOURS[i % SPARE_COLOURS.length]; }
+
+  function mean(v) { return v.reduce(function (a, b) { return a + b; }, 0) / v.length; }
+  function sd(v) {
+    if (v.length < 2) return NaN;
+    var m = mean(v);
+    return Math.sqrt(v.reduce(function (a, b) { return a + (b - m) * (b - m); }, 0) / (v.length - 1));
+  }
+
+  /* Grouped bars from the raw tablet times: case on x, one bar per grade. */
+  function bars(X, api) {
+    var el = api.el, Chart = api.Chart, svgEl = api.svgEl, fmt = api.fmt;
+    var box = el("div", { class: "chart" });
+    var reps = X.replicates.filter(function (r) { return isNum(r.dt_h); });
+    if (!reps.length) return box;
+
+    var cases = [];
+    reps.forEach(function (r) { if (cases.indexOf(r.case) < 0) cases.push(r.case); });
+    cases.sort(function (a, b) { return a - b; });
+    var grades = X.grade_order.filter(function (g) {
+      return reps.some(function (r) { return r.grade === g; });
+    });
+
+    /* Minutes read better than fractions of an hour for fast tablets. */
+    var top = Math.max.apply(null, reps.map(function (r) { return r.dt_h; }));
+    var inMin = top < 2;
+    var k = inMin ? 60 : 1, unit = inMin ? "min" : "h";
+
+    var groups = {};
+    reps.forEach(function (r) {
+      var key = r.case + "|" + r.grade;
+      (groups[key] = groups[key] || []).push(r);
+    });
+    var ymax = 0;
+    Object.keys(groups).forEach(function (key) {
+      var v = groups[key].map(function (r) { return r.dt_h * k; });
+      var s = sd(v);
+      ymax = Math.max(ymax, Math.max.apply(null, v), mean(v) + (isNum(s) ? s : 0));
+    });
+    ymax *= 1.08;
+
+    var width = Math.max(560, 90 + cases.length * (grades.length * 16 + 14));
+    var ch = new Chart(width, 330, { l: 56, r: 14, t: 30, b: 42 }).scales([0, cases.length], [0, ymax]);
+    ch.axes("case", "disintegration time (" + unit + ")", []);
+
+    var slot = (ch.px(1) - ch.px(0));
+    var barW = Math.min(18, (slot * 0.8) / grades.length);
+    cases.forEach(function (c, ci) {
+      var label = svgEl("text", {
+        x: ch.px(ci + 0.5), y: ch.h - ch.pad.b + 15, "text-anchor": "middle",
+        "font-size": 10, fill: "#5d6879"
+      });
+      label.textContent = c;
+      ch.svg.appendChild(label);
+
+      grades.forEach(function (g, gi) {
+        var rows = groups[c + "|" + g];
+        if (!rows) return;
+        var v = rows.map(function (r) { return r.dt_h * k; });
+        var m = mean(v), s = sd(v);
+        var colour = gradeColour(g, gi);
+        var x0 = ch.px(ci + 0.5) - (grades.length * barW) / 2 + gi * barW;
+        var bar = svgEl("rect", {
+          x: x0 + 1, y: ch.py(m), width: barW - 2, height: ch.py(0) - ch.py(m),
+          fill: colour, opacity: 0.75
+        });
+        var t = svgEl("title");
+        t.textContent = "case " + c + " / " + g + ": mean " + fmt(m, 2) + " " + unit +
+          (isNum(s) ? " (SD " + fmt(s, 2) + ")" : "") + ", " + v.length + " tablets";
+        bar.appendChild(t);
+        ch.svg.appendChild(bar);
+
+        var xc = x0 + barW / 2;
+        if (isNum(s)) {
+          [[m - s, m + s]].forEach(function (lh) {
+            ch.svg.appendChild(svgEl("line", {
+              x1: xc, x2: xc, y1: ch.py(Math.max(lh[0], 0)), y2: ch.py(lh[1]),
+              stroke: "#1c2330", "stroke-width": 1
+            }));
+            ch.svg.appendChild(svgEl("line", {
+              x1: xc - 3, x2: xc + 3, y1: ch.py(lh[1]), y2: ch.py(lh[1]),
+              stroke: "#1c2330", "stroke-width": 1
+            }));
+          });
+        }
+        rows.forEach(function (r, ri) {
+          var dot = svgEl("circle", {
+            cx: xc + (ri - (rows.length - 1) / 2) * 2.2, cy: ch.py(r.dt_h * k), r: 2.4,
+            fill: r.censored ? "#fff" : "#1c2330", stroke: "#1c2330", "stroke-width": 0.8
+          });
+          var dt = svgEl("title");
+          dt.textContent = "case " + c + " / " + g + ", tablet " + r.replicate + ": " +
+            fmt(r.dt_h * k, 2) + " " + unit + (r.censored ? " (still intact)" : "");
+          dot.appendChild(dt);
+          ch.svg.appendChild(dot);
+        });
+      });
+    });
+
+    grades.forEach(function (g, gi) {
+      var lx = ch.pad.l + 10 + gi * 90;
+      ch.svg.appendChild(svgEl("rect", {
+        x: lx, y: 10, width: 10, height: 10, fill: gradeColour(g, gi), opacity: 0.75
+      }));
+      var lt = svgEl("text", { x: lx + 14, y: 19, "font-size": 11, fill: "#3d4757" });
+      lt.textContent = g;
+      ch.svg.appendChild(lt);
+    });
+
+    box.appendChild(ch.svg);
+    return box;
+  }
+
   /* Disintegration time against the dissolution time scale, by grade. */
   function scatter(X, api, D) {
     var el = api.el, Chart = api.Chart, svgEl = api.svgEl, fmt = api.fmt;
@@ -160,10 +283,8 @@
     var xmax = Math.max.apply(null, xs) * 1.08, ymax = Math.max.apply(null, ys) * 1.08;
     var ch = new Chart(560, 320).scales([0, xmax], [0, ymax]);
     ch.axes("dissolution time scale Td (h)", "disintegration time (h)");
-    var colours = { K100LV: "#3b7dd8", K4M: "#d9822b", K100M: "#8e5bb5" };
-    var spare = ["#2a9d8f", "#c0392b", "#6c757d"];
     X.grade_order.forEach(function (g, i) {
-      var colour = colours[g] || spare[i % spare.length];
+      var colour = gradeColour(g, i);
       pts.filter(function (p) { return p.grade === g; }).forEach(function (p) {
         var c = svgEl("circle", {
           cx: ch.px(p.td_h), cy: ch.py(p.dt_h), r: 4.5,
