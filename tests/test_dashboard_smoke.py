@@ -35,7 +35,7 @@ const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
   { runScripts: "dangerously", virtualConsole: vc });
 const w = dom.window;
 for (const f of ["data.js", "model.js", "doe.js", "formulator.js",
-                  "disintegration.js", "figures.js", "audit.js", "app.js"]) {
+                  "disintegration.js", "figures.js", "manuscript.js", "audit.js", "app.js"]) {
   try { w.eval(fs.readFileSync(path.join(dash, f), "utf8")); }
   catch (e) { errors.push(f + " threw: " + e.message); }
 }
@@ -103,12 +103,22 @@ EXPECTED_TABS = {
     "disintegration",
     "guidelines",
     "admin",
+    "storyline",
+    "q1",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
 }
+
+#: Questions that need disintegration data, and hide without it.
+DISINTEGRATION_QUESTIONS = {"q3", "q4"}
 
 #: The top-row tabs of each mode, in order.
 EXPECTED_MODES = {
     "formulator": ["target", "predict", "substitute", "newapi", "data"],
-    "manuscripts": ["figures", "doe", "disintegration", "qa", "data"],
+    "manuscripts": ["storyline", "questions", "figures", "doe", "disintegration", "qa",
+                    "data"],
 }
 
 
@@ -156,6 +166,7 @@ def _expected_tabs() -> set[str]:
     expected = set(EXPECTED_TABS)
     if '"disintegration": {' not in data:
         expected.discard("disintegration")
+        expected -= DISINTEGRATION_QUESTIONS
     if '"figures": [' not in data:
         expected.discard("figures")
     return expected
@@ -243,7 +254,7 @@ const dom = new JSDOM(fs.readFileSync(path.join(dash, "index.html"), "utf8"),
   { runScripts: "dangerously", virtualConsole: vc });
 const w = dom.window;
 for (const f of ["data.js", "model.js", "doe.js", "formulator.js",
-                  "disintegration.js", "figures.js", "audit.js", "app.js"]) {
+                  "disintegration.js", "figures.js", "manuscript.js", "audit.js", "app.js"]) {
   w.eval(fs.readFileSync(path.join(dash, f), "utf8"));
 }
 w.document.dispatchEvent(new w.Event("DOMContentLoaded"));
@@ -401,3 +412,19 @@ def test_disintegration_tab_renders_when_the_sheet_exists(tmp_path: Path) -> Non
     assert tab["chars"] > 400 and tab["svg"] >= 1
     assert any(r["key"] == "dt_h" for r in payload["doe"]["responses"])
     assert "disintegration_in_doe_tab=1" in out["adminText"]
+
+
+def test_manuscript_questions_answer_with_evidence(rendered: dict) -> None:
+    """Each research question states an answer and a support status."""
+    data = json.loads(
+        (DASHBOARD / "data.js").read_text(encoding="utf-8").split("=", 1)[1].rsplit(";", 1)[0]
+    )
+    ms = data.get("manuscript")
+    assert ms, "data.js carries no manuscript section"
+    ids = [q["id"] for q in ms["questions"]]
+    assert ids == ["q1", "q2", "q3", "q4", "q5"]
+    for q in ms["questions"]:
+        assert q["answer"] and q["status_label"]
+    for name in ("storyline", "q1", "q2"):
+        assert rendered["tabs"][name]["chars"] > 400
+    assert ms["storyline"]["claims"], "the storyline lists no claims"

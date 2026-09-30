@@ -344,13 +344,18 @@
       drawSweetSpot(results);
     }
 
-    function nearestLink(a, h, grade) {
+    function nearestPoint(a, h, grade) {
       var best = null, bd = Infinity;
       D.design_points.forEach(function (p) {
         if (p.grade !== grade) return;
         var d = Math.pow(p.api_wt - a, 2) + Math.pow(p.hpmc_wt - h, 2);
         if (d < bd) { bd = d; best = p; }
       });
+      return best;
+    }
+
+    function nearestLink(a, h, grade) {
+      var best = nearestPoint(a, h, grade);
       if (!best) return "—";
       return '<button class="src-link" onclick="CR_goToSource(' + best.case +
         ",'" + best.grade + "')\">case " + best.case + " / " + best.grade + "</button>";
@@ -439,6 +444,7 @@
 
     renderTarget(D, api, {
       grades: grades, levels: levels, inHull: inHull, nearestLink: nearestLink,
+      nearestPoint: nearestPoint,
       apiRange: apiRange, hpmcRange: hpmcRange, lacRange: lacRange
     });
   }
@@ -658,6 +664,13 @@
       });
       cols.push({ key: "score", label: "worst miss (× band)", num: true });
       cols.push({ key: "f2", label: "f2", num: true });
+      /* Shear proxy (Manuscripts Q3) of the nearest measured formulation, so
+       * among candidates that all meet the profile the one least likely to
+       * change with hydrodynamics can be picked. Only with disintegration data. */
+      var shear = D.manuscript && D.manuscript.shear &&
+        Object.keys(D.manuscript.shear.by_formulation).length
+        ? D.manuscript.shear.by_formulation : null;
+      if (shear) cols.push({ key: "shear", label: "shear sensitivity (proxy)" });
       cols.push({ key: "src", label: "nearest measured", html: true });
       var tw = el("div", { class: "tablewrap" });
       tw.appendChild(table(cols, shortlist.map(function (r) {
@@ -667,9 +680,19 @@
           f2: fmt(r.f2, 0), src: ctx.nearestLink(r.api, r.hpmc, r.grade)
         };
         r.pred.forEach(function (v, i) { row["p" + i] = fmt(v, 1); });
+        if (shear) {
+          var near = ctx.nearestPoint(r.api, r.hpmc, r.grade);
+          var s = near ? shear[near.case + "|" + near.grade] : null;
+          row.shear = s ? s.tier : "—";
+        }
         return row;
       })));
       host.appendChild(tw);
+      if (shear) {
+        host.appendChild(el("p", { class: "hint" }, "Shear sensitivity is a " +
+          D.manuscript.shear.label + ", taken from the nearest measured formulation " +
+          "(low / mid / high third). See Manuscripts, Q3."));
+      }
       host.appendChild(el("p", { class: "hint" }, strict
         ? "All rows sit inside every band. Rows within about 0.2 of each other in worst miss " +
           "are not separated by anything the data can support, so choose on drug load, " +

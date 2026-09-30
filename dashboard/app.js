@@ -399,6 +399,9 @@
       { key: "data", label: "Data", panels: ["explorer"] }
     ],
     manuscripts: [
+      { key: "storyline", label: "Storyline", panels: ["storyline"] },
+      { key: "questions", label: "Research Questions",
+        panels: ["q1", "q2", "q3", "q4", "q5"] },
       { key: "figures", label: "Figures", panels: ["figures"] },
       { key: "doe", label: "DoE Deep-Dive", panels: ["doe", "surfaces", "metrics", "design"] },
       { key: "disintegration", label: "Disintegration", panels: ["disintegration"] },
@@ -409,7 +412,9 @@
   var PANEL_LABELS = {
     doe: "DoE Analysis", surfaces: "Weibull Surfaces", metrics: "Metrics",
     design: "Design Diagnostics", diagnostics: "Diagnostics",
-    guidelines: "Guidelines & Limitations", admin: "Admin / Audit"
+    guidelines: "Guidelines & Limitations", admin: "Admin / Audit",
+    q1: "Q1 Composition vs grade", q2: "Q2 Grade interchange", q3: "Q3 Shear",
+    q4: "Q4 Disintegration vs dissolution", q5: "Q5 Solubility"
   };
   var nav = { mode: "formulator", panel: null, last: {} };
 
@@ -417,6 +422,10 @@
   function panelAvailable(name) {
     if (name === "disintegration") return !!D.disintegration;
     if (name === "figures") return !!(D.figures && D.figures.length);
+    if (name === "storyline") return !!D.manuscript;
+    if (/^q\d$/.test(name)) {
+      return !!(window.CRManuscript && window.CRManuscript.available(D, name));
+    }
     return true;
   }
   function tabsFor(mode) {
@@ -1428,6 +1437,14 @@
     track("figures", function () {
       if (window.CRFigures) window.CRFigures.render(D, api);
     });
+    /* Each research question is its own step, so one that fails is counted
+     * on the Admin tab without taking the others with it. */
+    if (window.CRManuscript && D.manuscript) {
+      track("storyline", function () { window.CRManuscript.renderStoryline(D, api); });
+      D.manuscript.questions.forEach(function (q) {
+        track(q.id, function () { window.CRManuscript.renderQuestion(D, api, q.id); });
+      });
+    }
     track("disintegration", function () {
       if (window.CRDisintegration) window.CRDisintegration.render(D, api);
     });

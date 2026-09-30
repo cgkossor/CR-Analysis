@@ -194,3 +194,13 @@ abbr.tip:hover { color: var(--accent); text-decoration-color: var(--accent); }
 .tp-map .panel-title { font-size: 12.5px; font-weight: 600; margin: 2px 0 4px 6px; }
 details.advanced { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 10px; }
 details.advanced > summary { cursor: pointer; font-weight: 600; }
+
+/* ---------------------------------------------------------- manuscripts */
+.pill.status-supported { background: #e4f4eb; color: var(--ok); }
+.pill.status-directional { background: #fdf1e2; color: var(--warn); }
+.pill.status-not_supported { background: #fdecec; color: var(--danger); }
+.pill.status-gated, .pill.status-unavailable { background: #ecedf1; color: var(--muted); }
+.lede.question { font-size: 14px; color: var(--ink); font-weight: 600; }
+.callout.answer { background: #f5f8fd; border-color: #cfdcf2; }
+.callout.answer .pill { margin-right: 4px; }
+ul.caveats { color: var(--muted); font-size: 12.5px; }
