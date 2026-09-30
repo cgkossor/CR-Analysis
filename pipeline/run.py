@@ -28,6 +28,8 @@ from pipeline.glossary import render_parameters_md
 from pipeline.io.load import load_database
 from pipeline.io.quality import render_markdown as quality_markdown
 from pipeline.io.schema import SchemaError
+from pipeline.manuscript import build as build_manuscript
+from pipeline.manuscript import payload as manuscript_payload
 from pipeline.reports import (
     render_doe,
     render_equivalence,
@@ -125,6 +127,7 @@ def _payload(
     payload = build_payload(analysis, stress, diagnostics, disintegration)
     if figures:
         payload["figures"] = figures
+    payload["manuscript"] = manuscript_payload(build_manuscript(analysis, disintegration))
     audit = run_audit(
         source, analysis=analysis, stress=stress, payload=payload, disintegration=dt_file
     )
@@ -254,6 +257,19 @@ def _run(args: argparse.Namespace) -> int:
         analysis, args.disintegration or args.input, out_root,
         figures=not args.skip_figures, result=dt_result,
     ) if dt_result is not None else None
+
+    # The manuscript questions read the finished analysis and disintegration
+    # sections; their figures must exist before the gallery is listed.
+    from pipeline.manuscript import render as render_manuscript
+    from pipeline.manuscript import write_report as write_storyline
+
+    manuscript = build_manuscript(analysis, dt)
+    write_storyline(manuscript, out_root / "reports" / "storyline.md")
+    if not args.skip_figures:
+        ms_figures = render_manuscript(
+            manuscript, analysis, dt, out_root / "figures" / "manuscript"
+        )
+        print(f"Manuscript figures -> {len(ms_figures)} rendered")
 
     gallery = (
         None if args.skip_figures

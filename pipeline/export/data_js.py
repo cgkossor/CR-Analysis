@@ -726,6 +726,7 @@ def build_payload(
 #: Figure folders shown in the dashboard's Figures tab, in display order.
 GALLERY_GROUPS: tuple[tuple[str, str], ...] = (
     ("headlines", "Headline figures"),
+    ("manuscript", "Manuscript figures"),
     ("", "Dissolution figures"),
     ("disintegration", "Disintegration figures"),
 )
