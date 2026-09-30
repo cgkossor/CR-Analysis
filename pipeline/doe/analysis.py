@@ -47,6 +47,10 @@ class ResponseAnalysis:
     takeaway_traces: str
     takeaway_contour: str
     notes: tuple[str, ...] = field(default=())
+    trace_grade: str = ""
+    """The grade ``traces`` are evaluated at (the middle of the viscosity range)."""
+    traces_by_grade: tuple[tuple[str, tuple[effects.Trace, ...]], ...] = field(default=())
+    """The same Cox traces evaluated at every grade, in viscosity order."""
 
     @property
     def usable(self) -> bool:
@@ -74,6 +78,11 @@ def _grade_levels(design_points: pd.DataFrame) -> list[tuple[str, float, float]]
     return sorted(
         ((g, v, cp) for g, (v, cp) in seen.items()), key=lambda t: t[2]
     )
+
+
+def _reference_text(centroid: np.ndarray, grade: str) -> str:
+    api, hpmc, lactose = (float(v) * 100.0 for v in centroid)
+    return f"{api:.3g} / {hpmc:.3g} / {lactose:.3g} wt% API / HPMC / lactose, {grade}"
 
 
 def run(
@@ -168,8 +177,12 @@ def run(
         )
 
         beta = np.array([c.estimate for c in fit.coefficients])
-        traces = effects.cox_traces(
-            beta, keep_idx, spec, centroid, None, float(np.median(proc)), ranges
+        reference_v = float(np.median(proc))
+        traces = effects.cox_traces(beta, keep_idx, spec, centroid, None, reference_v, ranges)
+        trace_grade = min(grades, key=lambda g: abs(g[1] - reference_v))[0]
+        traces_by_grade = tuple(
+            (g[0], tuple(effects.cox_traces(beta, keep_idx, spec, centroid, None, g[1], ranges)))
+            for g in grades
         )
         g_trace = effects.grade_trace(
             beta, keep_idx, spec, centroid,
@@ -199,7 +212,9 @@ def run(
                 scale=surface.shared_scale(list(grids)),
                 takeaway_anova=interpret.anova_takeaway(table, data),
                 takeaway_effects=interpret.effects_takeaway(ranking, data),
-                takeaway_traces=interpret.trace_takeaway(traces, data),
+                takeaway_traces=interpret.trace_takeaway(
+                    traces, data, reference=_reference_text(centroid, trace_grade)
+                ),
                 takeaway_contour=interpret.contour_takeaway(
                     [(g.grade, g.z_min, g.z_max) for g in grids], data
                 ),
@@ -208,6 +223,8 @@ def run(
                     + tuple(response_notes)
                     + ((data.coverage_note,) if data.n_missing else ())
                 ),
+                trace_grade=trace_grade,
+                traces_by_grade=traces_by_grade,
             )
         )
 

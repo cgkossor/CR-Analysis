@@ -211,8 +211,15 @@ def effects_takeaway(ranking: EffectRanking, response: ResponseData) -> str:
     return text
 
 
-def trace_takeaway(traces: list[Trace], response: ResponseData) -> str:
-    """Which component moves this response most, over its tested range."""
+def trace_takeaway(
+    traces: list[Trace], response: ResponseData, reference: str = ""
+) -> str:
+    """Which component moves this response most, over its tested range.
+
+    Says outright that the traces are a model slice through one reference
+    formulation. Without that, a flat trace near 100 % reads as "every run
+    released fully", when runs at other grades or compositions may not have.
+    """
     spans: list[tuple[str, float]] = []
     for tr in traces:
         ys = np.asarray(tr.y_values, dtype=float)
@@ -230,6 +237,23 @@ def trace_takeaway(traces: list[Trace], response: ResponseData) -> str:
         f"{response.spec.units} — against {others}. Each trace varies one component "
         "and lets the others take up the difference in their existing proportions, "
         "which is what happens when you reformulate."
+        + _reference_caveat(response, reference)
+    )
+
+
+def _reference_caveat(response: ResponseData, reference: str) -> str:
+    if not reference:
+        return ""
+    values = response.values[response.available]
+    span = (
+        f" Measured values span {float(np.min(values)):.3g} to {float(np.max(values)):.3g} "
+        f"{response.spec.units} across the {int(response.available.sum())} formulations used."
+        if values.size else ""
+    )
+    return (
+        f" These lines are model predictions around one reference formulation ({reference}),"
+        " not measured data; other grades and compositions sit elsewhere (see the contour "
+        f"panels).{span}"
     )
 
 

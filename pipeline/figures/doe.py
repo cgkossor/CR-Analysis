@@ -124,18 +124,30 @@ def draw_interaction(ax: Axes, ra: ResponseAnalysis) -> None:
     ax.legend(title="Grade")
 
 
-def draw_traces(ax: Axes, ra: ResponseAnalysis) -> None:
-    """Cox response traces: the mixture analogue of a main-effects plot."""
+def draw_traces(ax: Axes, traces: Sequence[Any], ra: ResponseAnalysis,
+                legend: bool = True) -> None:
+    """Cox response traces: the mixture analogue of a main-effects plot.
+
+    An open circle marks the reference formulation on each line, the one point
+    all three traces share.
+    """
     styles = ("-", "--", "-.", ":")
-    for i, tr in enumerate(ra.traces):
+    for i, tr in enumerate(traces):
+        colour = pub.series_colour(i + 3)
         ax.plot(
-            tr.x_values, tr.y_values, color=pub.series_colour(i + 3),
+            tr.x_values, tr.y_values, color=colour,
             linestyle=styles[i % len(styles)], label=tr.label.replace("Hpmc", "HPMC"),
         )
+        ref = tr.reference_point.get(tr.factor)
+        if ref is not None:
+            x0 = float(ref)
+            ax.plot(x0, float(np.interp(x0, tr.x_values, tr.y_values)), "o", color=colour,
+                    markerfacecolor="white", markeredgewidth=0.8, markersize=3.5, zorder=4)
     ax.set_xlabel("Component (wt%)")
     ax.set_ylabel(_response_label(ra))
     pub.auto_minor(ax)
-    ax.legend()
+    if legend:
+        ax.legend()
 
 
 def draw_half_normal(ax: Axes, ra: ResponseAnalysis) -> None:
@@ -227,9 +239,43 @@ def surface_3d(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
 
 
 def traces(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
-    fig, ax = pub.new_figure(pub.SINGLE)
-    draw_traces(ax, ra)
+    """One panel per grade on a shared axis, so no grade's slice stands for all."""
+    by_grade = ra.traces_by_grade or ((ra.trace_grade, ra.traces),)
+    fig, axes = pub.new_figure(pub.DOUBLE, 2.5, ncols=len(by_grade), sharey=True)
+    axes = list(np.atleast_1d(axes))
+    for i, (ax, (grade, trs)) in enumerate(zip(axes, by_grade, strict=True)):
+        draw_traces(ax, trs, ra, legend=i == 0)
+        pub.header_note(ax, grade)
+        if i:
+            ax.set_ylabel("")
+    if len(axes) > 1:
+        pub.label_panels(axes)
     return pub.save(fig, out, f"doe_traces_{ra.response.spec.key}", banner=banner)
+
+
+def _trace_caption(ra: ResponseAnalysis) -> str:
+    label = ra.response.spec.label
+    ref = ra.traces[0].reference_point if ra.traces else {}
+    blend = (
+        f"{float(ref['api']):.3g} / {float(ref['hpmc']):.3g} / {float(ref['lactose']):.3g} "
+        "wt% API / HPMC / lactose"
+        if {"api", "hpmc", "lactose"} <= set(ref) else "the design centroid"
+    )
+    values = ra.response.values[ra.response.available]
+    measured = (
+        f" For comparison, measured {label.lower()} spans {float(values.min()):.3g} to "
+        f"{float(values.max()):.3g} {ra.response.spec.units} across the "
+        f"{values.size} formulations in the model."
+        if values.size else ""
+    )
+    return (
+        f"Cox response traces for {label.lower()}, one panel per grade. How to read: these "
+        f"are model predictions, not measured data. Each line starts from one reference "
+        f"formulation ({blend}; open circle) and varies one component while the other two "
+        "keep their ratio, which is what happens when a formulation is adjusted. A flat "
+        "trace means that component barely moves the response at that grade; it does not "
+        f"mean every run behaved that way.{measured}"
+    )
 
 
 def interaction(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
@@ -300,9 +346,7 @@ def render_doe_figures(
             ),
             FigureRecord(
                 f"DOE-traces-{key}", "doe", 12,
-                f"Cox response traces for {label.lower()}. Each varies one component "
-                "and lets the others absorb the change in their existing proportions, "
-                "which is what happens when a formulation is adjusted.",
+                _trace_caption(ra),
                 traces(ra, out_dir, banner),
             ),
             FigureRecord(
