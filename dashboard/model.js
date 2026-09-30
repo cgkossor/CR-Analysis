@@ -96,6 +96,94 @@
     return timeToPercent(td, beta, fInf === undefined ? 100 : fInf, 50);
   }
 
+  /* ------------------------------------------- target profile -> design */
+
+  /* How far a predicted curve sits from a target table. Each target row is
+   * {t, pct, band}. The score is the worst-case deviation in units of that
+   * row's band, so 1.0 means "just on the edge of the band somewhere".
+   *
+   * Two readings are returned. "feasible" asks whether the prediction itself
+   * sits inside every band. "plausible" first forgives each deviation by the
+   * cross-validated error (G6): the model cannot tell a formulation that misses
+   * by less than its own error from one that hits. Mirrors
+   * pipeline/optimize/target_profile.py. */
+  function scoreAgainstTarget(pred, targets, cvRmse) {
+    var worst = 0, worstPlausible = 0, cv = cvRmse > 0 ? cvRmse : 0;
+    for (var i = 0; i < targets.length; i++) {
+      var band = targets[i].band > 0 ? targets[i].band : 1e-9;
+      var dev = Math.abs(pred[i] - targets[i].pct);
+      if (!isFinite(dev)) return null;
+      worst = Math.max(worst, dev / band);
+      worstPlausible = Math.max(worstPlausible, Math.max(dev - cv, 0) / band);
+    }
+    return {
+      score: worst, plausibleScore: worstPlausible,
+      feasible: worst <= 1 + 1e-12, plausible: worstPlausible <= 1 + 1e-12
+    };
+  }
+
+  /* FDA f2 over the target time points. Informational only: with four to six
+   * points it is coarser than the band test, which is what decides. */
+  function f2(reference, test) {
+    var n = reference.length, ss = 0;
+    if (!n) return null;
+    for (var i = 0; i < n; i++) ss += Math.pow(reference[i] - test[i], 2);
+    return 50 * Math.log(100 / Math.sqrt(1 + ss / n)) / Math.LN10;
+  }
+
+  /* Every formulation on a grid inside the tested region, scored against the
+   * target. Drug load is searched too unless opts.lockApi pins it, which is
+   * what makes the answers differ in composition and grade rather than by a
+   * few percent around one fixed load. */
+  function searchTargetProfile(surfaces, levels, grades, targets, opts) {
+    var step = opts.step || 1.25, out = [];
+    var times = targets.map(function (r) { return r.t; });
+    var ref = targets.map(function (r) { return r.pct; });
+    var aLo = opts.apiRange.lo, aHi = opts.apiRange.hi;
+    if (opts.lockApi) {
+      aLo = Math.max(aLo, opts.lockApi.value - opts.lockApi.tol);
+      aHi = Math.min(aHi, opts.lockApi.value + opts.lockApi.tol);
+    }
+    for (var a = aLo; a <= aHi + 1e-9; a += step) {
+      for (var h = opts.hpmcRange.lo; h <= opts.hpmcRange.hi + 1e-9; h += step) {
+        var l = 100 - a - h;
+        if (l < opts.lacRange.lo - 1e-9 || l > opts.lacRange.hi + 1e-9) continue;
+        if (opts.inHull && !opts.inHull(a, h)) continue;
+        for (var gi = 0; gi < grades.length; gi++) {
+          var g = grades[gi];
+          var pred = predictProfile(surfaces, levels, a, h, l, g.lv, times).curve;
+          var s = scoreAgainstTarget(pred, targets, opts.cvRmse);
+          if (!s) continue;
+          out.push({
+            api: a, hpmc: h, lac: l, grade: g.grade, lv: g.lv, pred: pred,
+            score: s.score, plausibleScore: s.plausibleScore,
+            feasible: s.feasible, plausible: s.plausible, f2: f2(ref, pred)
+          });
+        }
+      }
+    }
+    out.sort(function (x, y) { return x.score - y.score; });
+    return out;
+  }
+
+  /* The best candidate per grade and per drug-load third. Top-N by score
+   * returns near-copies of one formulation; this returns the distinct ways of
+   * reaching the target, which is the choice a formulator actually has. */
+  function diverseShortlist(results, apiRange, accept) {
+    var span = (apiRange.hi - apiRange.lo) || 1, best = {};
+    results.forEach(function (r) {
+      if (!accept(r)) return;
+      var third = Math.min(2, Math.floor(3 * (r.api - apiRange.lo) / span));
+      var key = r.grade + "|" + third;
+      if (!best[key] || r.score < best[key].score) {
+        best[key] = r;
+        r.loadThird = ["low", "mid", "high"][third];
+      }
+    });
+    return Object.keys(best).map(function (k) { return best[k]; })
+      .sort(function (x, y) { return x.score - y.score; });
+  }
+
   var api = {
     evalTerm: evalTerm,
     predictResponse: predictResponse,
@@ -103,7 +191,11 @@
     weibull: weibull,
     predictProfile: predictProfile,
     timeToPercent: timeToPercent,
-    t50From: t50From
+    t50From: t50From,
+    scoreAgainstTarget: scoreAgainstTarget,
+    f2: f2,
+    searchTargetProfile: searchTargetProfile,
+    diverseShortlist: diverseShortlist
   };
 
   if (typeof module !== "undefined" && module.exports) { module.exports = api; }

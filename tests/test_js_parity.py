@@ -198,3 +198,51 @@ def test_t50_definition_matches_between_python_and_javascript() -> None:
             assert js_t50 == pytest.approx(py.value, rel=2e-3), (
                 f"t50 diverged for Td={td}, beta={beta}, F_inf={f_inf}"
             )
+
+
+#: A target table with a tight early band and looser late ones, the shape a
+#: PK-derived target usually takes.
+TARGET = [(1.0, 20.0, 5.0), (2.0, 30.0, 5.0), (4.0, 45.0, 10.0), (8.0, 65.0, 10.0),
+          (12.0, 78.0, 10.0), (24.0, 92.0, 10.0)]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_target_profile_score_matches_python(exported: tuple[Path, Analysis]) -> None:
+    """The target-profile tool ranks on model.js; Python must agree on every score."""
+    from pipeline.optimize.target_profile import TargetPoint, evaluate
+
+    data_js, analysis = exported
+    script = f"""
+    const fs = require('fs');
+    global.window = global;
+    eval(fs.readFileSync({json.dumps(str(data_js))}, 'utf8'));
+    const M = require({json.dumps(str(ROOT / "dashboard" / "model.js"))});
+    const levels = window.CR_DATA.design_points.map(p => p.log10_visc);
+    const cv = window.CR_DATA.validation.profile_rmse_pct;
+    const targets = {json.dumps(TARGET)}.map(r => ({{ t: r[0], pct: r[1], band: r[2] }}));
+    const times = targets.map(r => r.t);
+    const out = {json.dumps(PROBES)}.map(p => {{
+      const pred = M.predictProfile(window.CR_DATA.surfaces, levels, p[0], p[1], p[2], p[3], times);
+      const s = M.scoreAgainstTarget(pred.curve, targets, cv);
+      s.f2 = M.f2(targets.map(r => r.pct), pred.curve);
+      return s;
+    }});
+    process.stdout.write(JSON.stringify(out));
+    """
+    result = subprocess.run(
+        [str(NODE), "-e", script], capture_output=True, text=True, timeout=120, check=False
+    )
+    assert result.returncode == 0, f"node failed: {result.stderr}"
+    js = json.loads(result.stdout)
+
+    targets = [TargetPoint(t, pct, band) for t, pct, band in TARGET]
+    # Deviations are divided by a 5% band, so the 0.01% profile tolerance above
+    # becomes 0.002 in score units.
+    for probe, js_score in zip(PROBES, js, strict=True):
+        py = evaluate(analysis, *probe, targets)
+        assert py is not None
+        assert js_score["score"] == pytest.approx(py.score, abs=2e-3), probe
+        assert js_score["plausibleScore"] == pytest.approx(py.plausible_score, abs=2e-3), probe
+        assert js_score["f2"] == pytest.approx(py.f2, abs=0.05), probe
+        if abs(py.score - 1.0) > 2e-3:
+            assert js_score["feasible"] == py.feasible, probe
