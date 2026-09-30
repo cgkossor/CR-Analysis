@@ -122,6 +122,23 @@ NOMINAL_SCHEDULE_H: Final[tuple[float, ...]] = (
 #: further apart than this, so a hole in the record is never bridged by a line.
 MAX_INTERP_GAP_H: Final[float] = 1.0
 
+# --- Spike filter ------------------------------------------------------------
+# Probe readings disturbed by a bubble or by interference show up as a single
+# point far off the curve. They are removed at load, per replicate, before any
+# metric or plot sees them; see pipeline/profiles/spikes.py for the rule. The
+# audit reports how many readings were removed.
+SPIKE_FILTER: Final[bool] = True
+#: Readings in the centred rolling median each point is compared with.
+SPIKE_WINDOW: Final[int] = 5
+#: Never flag a reading closer than this to the rolling median (% released).
+SPIKE_MIN_PCT: Final[float] = 3.0
+#: ...nor one within this many robust SDs (1.4826 x MAD) of the replicate's noise.
+SPIKE_NOISE_K: Final[float] = 6.0
+#: A run of more flagged readings than this is behaviour, not a spike.
+SPIKE_MAX_RUN: Final[int] = 2
+#: Replicates with fewer readings are not filtered (sparse manual pulls).
+SPIKE_MIN_READINGS: Final[int] = 30
+
 # =============================================================================
 # PLOTTING -- AXIS LIMITS
 # =============================================================================

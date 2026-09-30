@@ -21,6 +21,7 @@ import pandas as pd
 
 from pipeline import config
 from pipeline.io.schema import DissolutionSchema, SchemaError, detect_schema
+from pipeline.profiles.spikes import remove_spikes
 
 #: Canonical long-format columns produced by :func:`load_database`.
 LONG_COLUMNS = (
@@ -69,6 +70,15 @@ class Database:
 
     rows_beyond_window: int = 0
     """Readings dropped for lying past :data:`config.ANALYSIS_WINDOW_H`."""
+
+    spikes_removed: int = 0
+    """Readings dropped as momentary spikes (bubbles, interference)."""
+
+    spike_log: pd.DataFrame | None = None
+    """One row per removed spike; see :data:`pipeline.profiles.spikes.LOG_COLUMNS`."""
+
+    readings_log: pd.DataFrame | None = None
+    """Per replicate: readings loaded, spikes removed, dropped past the window, kept."""
 
 
 def _find_sheet(sheets: list[str], *candidates: str) -> str | None:
@@ -222,7 +232,17 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
 
     long = long.sort_values(["id", "replicate", "time_h"], kind="mergesort").reset_index(drop=True)
     long = long[list(LONG_COLUMNS)]
+    # Trim to the window first, so the spike filter judges only readings the
+    # analysis will use.
+    loaded = long.groupby(["id", "replicate"]).size().rename("loaded")
     long, beyond = _apply_window(long, config.ANALYSIS_WINDOW_H)
+    in_window = long.groupby(["id", "replicate"]).size().rename("in_window")
+    long, spike_log = remove_spikes(long)
+    kept = long.groupby(["id", "replicate"]).size().rename("kept")
+    readings_log = pd.concat([loaded, in_window, kept], axis=1).fillna(0).astype(int)
+    readings_log["beyond_window"] = readings_log["loaded"] - readings_log["in_window"]
+    readings_log["spikes_removed"] = readings_log["in_window"] - readings_log["kept"]
+    readings_log = readings_log.drop(columns="in_window").reset_index()
 
     design_spec: pd.DataFrame | None = None
     viscosity: dict[str, float] = {}
@@ -263,6 +283,9 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
         vessel_volume_ml=volume,
         schema=schema,
         rows_beyond_window=beyond,
+        spikes_removed=len(spike_log),
+        spike_log=spike_log,
+        readings_log=readings_log,
     )
 
 
