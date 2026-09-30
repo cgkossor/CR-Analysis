@@ -139,6 +139,12 @@ SPIKE_MAX_RUN: Final[int] = 2
 #: Replicates with fewer readings are not filtered (sparse manual pulls).
 SPIKE_MIN_READINGS: Final[int] = 30
 
+# --- Plotting measured profiles --------------------------------------------
+#: Densely logged profiles are plotted at their own sampling spacing, but only
+#: every Nth reading is drawn so markers stay distinguishable. Manual pulls are
+#: always drawn in full.
+PLOT_POINT_STRIDE: Final[int] = 2
+
 # =============================================================================
 # PLOTTING -- AXIS LIMITS
 # =============================================================================

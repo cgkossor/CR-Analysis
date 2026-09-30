@@ -14,7 +14,6 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
-from pipeline import config
 from pipeline.analysis import Analysis
 from pipeline.figures import doe as doefig
 from pipeline.figures import publication as pub
@@ -37,27 +36,21 @@ HEADLINE_RESPONSE = "t50"
 
 def _h1(analysis: Analysis, out: Path, banner: str | None) -> FigureRecord:
     grades = render.grades_by_viscosity(analysis)
-    bands = render.replicate_bands(analysis)
+    profiles = render.measured_profiles(analysis)
     styles = render.case_styles(analysis)
 
     fig, axes = pub.new_figure(pub.DOUBLE, 3.4, ncols=len(grades), sharey=True)
     axes = list(np.atleast_1d(axes))
-    t = analysis.time_grid
     handles: dict[int, Any] = {}
     for i, (ax, grade) in enumerate(zip(axes, grades, strict=False)):
-        for key in sorted(k for k in bands if k[1] == grade):
+        for key in sorted(k for k in profiles if k[1] == grade):
             case = key[0]
             if case not in styles:
                 continue
             st = styles[case].style
-            mean, sd = bands[key]
-            ok = np.isfinite(mean)
-            ax.fill_between(t[ok], (mean - sd)[ok], (mean + sd)[ok], color=st.colour,
-                            alpha=0.10, linewidth=0)
-            (line,) = ax.plot(t[ok], mean[ok], color=st.colour, lw=1.1,
-                              linestyle=st.linestyle)
-            handles.setdefault(case, line)
-        ax.axhline(config.CENSORING_PCT, color=pub.MUTED, ls=":", lw=0.7)
+            render.draw_measured(ax, profiles[key], st.colour, st.marker)
+            handles.setdefault(case, render.case_handle(st))
+        render.full_release_line(ax)
         pub.time_axis(ax)
         pub.percent_axis(ax)
         pub.corner_note(ax, grade, "lower right")
@@ -68,12 +61,10 @@ def _h1(analysis: Analysis, out: Path, banner: str | None) -> FigureRecord:
     n_rep = int(analysis.quality.n_replicates)
     return FigureRecord(
         "H1", "headline", 1,
-        "Measured release profiles by HPMC grade (panels, ordered by viscosity). Each "
-        "case keeps the same colour and line style in every panel; line style shows the "
-        "API level and the legend gives each composition. Lines are formulation means "
-        f"(n = {n_rep} replicates); shaded "
-        f"bands are ±1 SD across replicates. Dotted grey: {config.CENSORING_PCT:.0f} % "
-        "release.",
+        f"Measured release profiles by HPMC grade (panels, ordered by viscosity; n = {n_rep} "
+        f"replicates). {render.MEASURED_CAPTION} Each case keeps the same colour and marker "
+        "in every panel; marker shape shows the API level and the legend gives each "
+        "composition. Dotted grey: 100 % release.",
         pub.save(fig, out, HEADLINES[0], banner=banner),
     )
 

@@ -100,6 +100,28 @@ def test_strict_mode_rejects_titles(tmp_path: Path) -> None:
         plt.close(fig)
 
 
+def test_manual_pulls_are_plotted_in_full_with_a_bar_on_every_point() -> None:
+    from pipeline.figures.render import measured_profiles
+
+    analysis = run_analysis(load_database(_database()))
+    for prof in measured_profiles(analysis).values():
+        assert prof.t.size == analysis.time_grid.size
+        assert prof.bars.all()
+
+
+def test_dense_logs_are_thinned_with_bars_on_the_schedule() -> None:
+    import numpy as np
+
+    from pipeline import config
+    from pipeline.figures.render import _native_grid
+
+    t = np.arange(0.0, 24.0 + 1e-9, 1 / 6)
+    grid, dense = _native_grid([t, t + 0.7 / 60, t + 1.4 / 60])
+    assert dense
+    assert grid[0] == 0.0 and grid[-1] == config.ANALYSIS_WINDOW_H
+    assert np.allclose(np.diff(grid), 1 / 6)
+
+
 def test_spread_labels_enforces_the_gap() -> None:
     ys = pub.spread_labels([1.0, 1.01, 1.02, 5.0], 0.5)
     ordered = sorted(ys)

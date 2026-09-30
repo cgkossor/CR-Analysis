@@ -71,7 +71,7 @@ def _api_level(api: float, levels: list[float]) -> int:
 def case_styles(analysis: Analysis) -> dict[int, CaseStyle]:
     """A fixed style and legend label per case, shared by every panel.
 
-    Line style shows the API level; colour tells the cases within one level
+    Marker shape shows the API level; colour tells the cases within one level
     apart. The label carries the composition, so the legend alone says which
     recipe a line is: "Case 3: 22.5 / 29.5 / 48" is API / HPMC / lactose, wt%.
     """
@@ -84,14 +84,135 @@ def case_styles(analysis: Analysis) -> dict[int, CaseStyle]:
         k = used.get(level, 0)
         used[level] = k + 1
         style = pub.SeriesStyle(
-            pub.CASE_COLOURS[k % len(pub.CASE_COLOURS)], "o", pub.API_LEVEL_LINESTYLES[level]
+            pub.CASE_COLOURS[k % len(pub.CASE_COLOURS)],
+            pub.API_LEVEL_MARKERS[level],
+            pub.API_LEVEL_LINESTYLES[level],
         )
         label = f"Case {int(r.case)}: {r.api_wt:g} / {r.hpmc_wt:g} / {r.lactose_wt:g}"
         out[int(r.case)] = CaseStyle(style, label, level, float(r.api_wt))
     return out
 
 
-CASE_LEGEND_TITLE = "Case: API / HPMC / lactose (wt%). Line style shows the API level."
+CASE_LEGEND_TITLE = "Case: API / HPMC / lactose (wt%). Marker shape shows the API level."
+
+#: How measured profiles are drawn, stated once for every caption that shows them.
+MEASURED_CAPTION = (
+    "Points are the replicate mean at the data's own sampling times, joined by straight "
+    "segments; densely logged runs show every second reading, with ±1 SD error bars at the "
+    "nominal schedule times (manual pulls: every point). Momentary spikes (bubbles, "
+    "interference) are removed before plotting."
+)
+
+
+@dataclass(frozen=True)
+class MeasuredProfile:
+    """One formulation's measured release, as drawn.
+
+    ``t``/``mean``/``sd`` sit at the data's own sampling spacing (thinned for
+    densely logged data); ``bars`` marks the points that carry an error bar.
+    """
+
+    t: np.ndarray
+    mean: np.ndarray
+    sd: np.ndarray
+    bars: np.ndarray
+
+
+def _native_grid(times: list[np.ndarray]) -> tuple[np.ndarray, bool]:
+    """The replicates' own schedule, and whether it is densely logged.
+
+    Replicates sharing one clock (manual pulls) keep their exact times. Probe
+    logs, each on its own clock, get a regular grid at their median interval.
+    """
+    window = config.ANALYSIS_WINDOW_H + 1e-9
+    first = times[0]
+    if all(v.shape == first.shape and np.allclose(v, first) for v in times):
+        return first[first <= window], False
+    step = float(np.median(np.concatenate([np.diff(v) for v in times if v.size > 1])))
+    end = min(float(v.max()) for v in times)
+    end = min(end, config.ANALYSIS_WINDOW_H)
+    grid = np.arange(0.0, end + 1e-9, step)
+    if end - grid[-1] > 1e-6:
+        grid = np.append(grid, end)
+    else:
+        grid[-1] = end  # snap float drift, so the 24 h point is exactly 24 h
+    return grid, True
+
+
+def measured_profiles(analysis: Analysis) -> dict[tuple[int, str], MeasuredProfile]:
+    """Mean and SD across replicates at the data's own sampling spacing.
+
+    Each replicate is projected onto the common grid on its own clock before
+    averaging, as ``analysis._mean_profiles`` does. Densely logged data keep only
+    every :data:`config.PLOT_POINT_STRIDE`-th point (plus the last), and carry
+    error bars only at the point nearest each analysis-grid time, so bars stay
+    readable; manual pulls are drawn in full with a bar on every point.
+    """
+    schedule = np.asarray(analysis.time_grid, dtype=float)
+    gap = analysis.time_grid_info.max_gap_h
+    out: dict[tuple[int, str], MeasuredProfile] = {}
+    for (case, grade), group in analysis.db.profiles.groupby(["case", "grade"]):
+        reps = [r.sort_values("time_h") for _, r in group.groupby("replicate")]
+        grid, dense = _native_grid([r["time_h"].to_numpy(dtype=float) for r in reps])
+        stacked = np.vstack([
+            project_onto_grid(r["time_h"].to_numpy(dtype=float),
+                              r["pct_released"].to_numpy(dtype=float), grid, gap)
+            for r in reps
+        ])
+        ok = np.isfinite(stacked).all(axis=0)
+        mean = np.where(ok, stacked.mean(axis=0), np.nan)
+        sd = np.where(ok, stacked.std(axis=0, ddof=1) if len(reps) > 1 else 0.0, np.nan)
+        if dense:
+            keep = np.zeros(grid.size, dtype=bool)
+            keep[:: config.PLOT_POINT_STRIDE] = True
+            keep[-1] = True
+            grid, mean, sd = grid[keep], mean[keep], sd[keep]
+            spacing = float(np.median(np.diff(grid))) if grid.size > 1 else 0.0
+            bars = np.zeros(grid.size, dtype=bool)
+            for s in schedule:
+                k = int(np.argmin(np.abs(grid - s)))
+                if abs(grid[k] - s) <= spacing / 2 + 1e-9:
+                    bars[k] = True
+        else:
+            bars = np.ones(grid.size, dtype=bool)
+        out[(int(case), str(grade))] = MeasuredProfile(grid, mean, sd, bars)
+    return out
+
+
+def draw_measured(
+    ax: Axes,
+    prof: MeasuredProfile,
+    colour: str,
+    marker: str,
+    *,
+    filled: bool = True,
+    label: str | None = None,
+) -> None:
+    """Measured means as markers joined by straight segments, ±1 SD error bars.
+
+    The segments break wherever the mean is missing, so a hole in the record is
+    never bridged.
+    """
+    ax.plot(
+        prof.t, prof.mean, marker=marker, linestyle="-", linewidth=0.6, color=colour,
+        markersize=2.6, markerfacecolor=colour if filled else "white",
+        markeredgecolor=colour, markeredgewidth=0.6, label=label,
+    )
+    m = prof.bars & np.isfinite(prof.mean)
+    ax.errorbar(
+        prof.t[m], prof.mean[m], yerr=np.nan_to_num(prof.sd[m]), fmt="none",
+        ecolor=colour, elinewidth=0.5, capsize=1.4, capthick=0.5,
+    )
+
+
+def full_release_line(ax: Axes) -> None:
+    ax.axhline(pub.FULL_RELEASE_PCT, color=pub.MUTED, ls=":", lw=0.7, zorder=0)
+
+
+def case_handle(style: pub.SeriesStyle) -> Line2D:
+    """Legend proxy for a measured series: marker on a short segment."""
+    return Line2D([], [], marker=style.marker, color=style.colour, linestyle="-",
+                  linewidth=0.6, markersize=3.5)
 
 
 def case_legend(fig: Figure, handles: dict[int, Line2D], styles: dict[int, CaseStyle]) -> None:
@@ -127,37 +248,10 @@ def case_legend(fig: Figure, handles: dict[int, Line2D], styles: dict[int, CaseS
             labels.append("")
     legend = fig.legend(
         entries, labels, loc="outside lower center", ncol=len(order),
-        title=CASE_LEGEND_TITLE, handlelength=3.2, columnspacing=2.4, borderaxespad=0.2,
+        title=CASE_LEGEND_TITLE, handlelength=1.2, columnspacing=2.4, borderaxespad=0.2,
     )
     for i in headers:
         legend.get_texts()[i].set_fontweight("bold")
-
-
-def replicate_bands(
-    analysis: Analysis,
-) -> dict[tuple[int, str], tuple[np.ndarray, np.ndarray]]:
-    """Mean and SD across replicates per design point, on the analysis time grid.
-
-    Each replicate is projected onto the grid on its own clock first, exactly as
-    ``analysis._mean_profiles`` does, so the band and the mean line agree.
-    """
-    grid = analysis.time_grid_info
-    out: dict[tuple[int, str], tuple[np.ndarray, np.ndarray]] = {}
-    for (case, grade), group in analysis.db.profiles.groupby(["case", "grade"]):
-        stacked = np.vstack([
-            project_onto_grid(
-                rep["time_h"].to_numpy(dtype=float),
-                rep["pct_released"].to_numpy(dtype=float),
-                grid.times_h,
-                grid.max_gap_h,
-            )
-            for _, rep in group.groupby("replicate")
-        ])
-        ok = np.isfinite(stacked).all(axis=0)
-        mean = np.where(ok, stacked.mean(axis=0), np.nan)
-        sd = np.where(ok, stacked.std(axis=0, ddof=1) if len(stacked) > 1 else 0.0, np.nan)
-        out[(int(case), str(grade))] = (mean, sd)
-    return out
 
 
 def best_cross_grade_set(analysis: Analysis) -> EquivalenceSet | None:
@@ -220,21 +314,17 @@ def draw_equivalence(ax: Axes, analysis: Analysis, best: EquivalenceSet) -> int:
     ][:3]
     shown = [(best.target_case, best.target_grade), *others]
     markers = ("o", "s", "^", "D")
-    lines = ("-", "--", "-.", ":")
+    profiles = measured_profiles(analysis)
     drawn = 0
     for i, key in enumerate(shown):
-        curve = analysis.observed_profiles.get(key)
-        if curve is None:
+        if key not in profiles:
             continue
         f2 = next((m.f2 for m in best.members if (m.case, m.grade) == key), float("nan"))
         label = f"Case {key[0]}, {key[1]}" + (" (target)" if i == 0 else f", f2 = {f2:.0f}")
-        ok = np.isfinite(curve)
-        ax.plot(
-            analysis.time_grid[ok], curve[ok], color=pub.grade_style(key[1], i).colour,
-            marker=markers[i % 4], linestyle=lines[i % 4], markersize=3.2,
-            markerfacecolor="white" if i else None, markeredgewidth=0.7, label=label,
-        )
+        draw_measured(ax, profiles[key], pub.grade_style(key[1], i).colour,
+                      markers[i % 4], filled=i == 0, label=label)
         drawn += 1
+    full_release_line(ax)
     pub.time_axis(ax)
     pub.percent_axis(ax)
     ax.legend(loc="lower right")
@@ -334,11 +424,12 @@ def render_all(analysis: Analysis, stress: StressTest, out_dir: Path) -> list[Fi
         draw_equivalence(ax, analysis, best)
         emit(
             "F02", "02_equivalence_demonstration", 2,
-            f"Mean measured profiles of formulations f2-similar to case "
+            f"Measured release of formulations f2-similar to case "
             f"{best.target_case} ({best.target_grade}), spanning "
             f"{len(best.grades_spanned)} grades ({', '.join(best.grades_spanned)}). "
             "Different composition and grade can give the same release, so formulation "
-            "freedom for a given target can be spent on secondary criteria.",
+            f"freedom for a given target can be spent on secondary criteria. "
+            f"{MEASURED_CAPTION} Dotted grey: 100 % release.",
             fig,
         )
 
@@ -482,17 +573,16 @@ def render_all(analysis: Analysis, stress: StressTest, out_dir: Path) -> list[Fi
     styles = case_styles(analysis)
     fig, axes = pub.new_figure(pub.DOUBLE, 3.3, ncols=len(grades), sharey=True)
     axes = list(np.atleast_1d(axes))
+    profiles = measured_profiles(analysis)
     handles: dict[int, Line2D] = {}
     for i, (ax, grade) in enumerate(zip(axes, grades, strict=False)):
-        for (case, g), curve in sorted(analysis.observed_profiles.items()):
+        for (case, g), prof in sorted(profiles.items()):
             if g != grade or case not in styles:
                 continue
             st = styles[case].style
-            ok = np.isfinite(curve)
-            (line,) = ax.plot(analysis.time_grid[ok], curve[ok], color=st.colour, lw=1.0,
-                              linestyle=st.linestyle)
-            handles.setdefault(case, line)
-        ax.axhline(config.CENSORING_PCT, color=pub.MUTED, ls=":", lw=0.7)
+            draw_measured(ax, prof, st.colour, st.marker)
+            handles.setdefault(case, case_handle(st))
+        full_release_line(ax)
         pub.time_axis(ax)
         pub.percent_axis(ax)
         pub.corner_note(ax, grade, "lower right")
@@ -502,10 +592,10 @@ def render_all(analysis: Analysis, stress: StressTest, out_dir: Path) -> list[Fi
     case_legend(fig, handles, styles)
     emit(
         "F08", "08_profiles_by_grade", 8,
-        "Mean measured profile of every formulation, one panel per grade (ordered by "
-        "viscosity). Each case keeps the same colour and line style in every panel; line "
-        "style shows the API level and the legend gives each composition. Dotted grey: "
-        f"{config.CENSORING_PCT:.0f} % release.",
+        "Measured release of every formulation, one panel per grade (ordered by "
+        f"viscosity): {MEASURED_CAPTION} "
+        "Each case keeps the same colour and marker in every panel; marker shape shows the "
+        "API level and the legend gives each composition. Dotted grey: 100 % release.",
         fig,
     )
 
