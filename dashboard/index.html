@@ -15,10 +15,18 @@
     <h1>Controlled-Release Matrix Tablet Workbench</h1>
     <p class="sub" id="subtitle">loading…</p>
   </div>
-  <div class="badge" id="cv-badge" title="Cross-validated prediction error attached to every prediction (G6)"></div>
+  <div class="mast-right">
+    <div class="modes" id="modes" role="tablist" aria-label="Mode">
+      <button type="button" role="tab" data-mode="formulator" aria-selected="true">Formulator</button>
+      <button type="button" role="tab" data-mode="manuscripts" aria-selected="false">Manuscripts</button>
+    </div>
+    <span id="api-slot" class="api-slot"></span>
+    <div class="badge" id="cv-badge" title="Cross-validated prediction error attached to every prediction (G6)"></div>
+  </div>
 </header>
 
 <nav class="tabs" id="tabs" role="tablist"></nav>
+<nav class="tabs subtabs" id="subtabs" role="tablist" hidden></nav>
 
 <main id="panels">
 
@@ -169,12 +177,67 @@
     <div id="st-points" class="tablewrap"></div>
   </section>
 
-  <section class="panel" data-tab="formulator" hidden>
-    <h2>Formulator Tool</h2>
-    <p class="lede">Forward prediction and inverse design. Every result carries its
-      cross-validated error and its in/out-of-design-space status.</p>
+  <section class="panel" data-tab="target" hidden>
+    <h2>Design for a Target Profile</h2>
+    <p class="lede">Enter the release profile you need, for example one worked back
+      from a PK target, with a tolerance band on each point. The tool searches drug
+      load, HPMC content and grade across the tested region and shows every
+      formulation that lands inside the bands.</p>
 
-    <h3>Forward: predict a profile</h3>
+    <div class="tp-layout">
+      <div>
+        <div class="controls">
+          <label>Start from <select id="tp-preset"></select></label>
+        </div>
+        <div id="tp-table" class="tp-table"></div>
+        <p><button type="button" id="tp-add">Add time point</button>
+          <button type="button" id="tp-reset">Reset bands</button></p>
+        <div class="controls">
+          <label><input type="checkbox" id="tp-lock"> lock drug load at</label>
+          <label><input type="number" id="tp-lock-api" value="35" min="0" max="100" step="0.5"> wt%</label>
+          <label>± <input type="number" id="tp-lock-tol" value="2.5" min="0" max="30" step="0.5"></label>
+          <label>Tablet weight (mg, optional) <input type="number" id="tp-tablet" min="0" step="10" placeholder="none"></label>
+        </div>
+      </div>
+      <div id="tp-summary"></div>
+    </div>
+
+    <h3>Where the target is reachable</h3>
+    <p class="hint">One panel per grade. Solid shading means the predicted profile
+      sits inside every band (darker = more margin). Pale shading means it only gets
+      there within the cross-validated error. Blank means outside the band or outside
+      the tested region, where nothing is proposed.</p>
+    <div id="tp-map" class="tp-map"></div>
+
+    <h3>Distinct ways to reach it</h3>
+    <p class="hint">The best candidate for each grade and drug-load third, rather
+      than a list of near-copies of one formulation.</p>
+    <div id="tp-results"></div>
+    <div id="tp-profiles" class="chart"></div>
+
+    <details class="advanced">
+      <summary>Advanced: desirability goals at a fixed drug load</summary>
+      <p class="hint">The earlier inverse design. Drug load is fixed and the tool
+        ranks HPMC grade and content on the named-response models.</p>
+      <div class="controls">
+        <label>API load (wt%) <input type="number" id="iv-api" value="35" min="0" max="100" step="0.5"></label>
+        <label>± tolerance <input type="number" id="iv-api-tol" value="5" min="0" max="30" step="0.5"></label>
+        <label>Goal <select id="iv-goal"></select></label>
+        <span id="iv-prompts" style="display:contents"></span>
+      </div>
+      <div id="iv-weights"></div>
+      <div id="iv-results"></div>
+      <h3>Predicted profiles for the top candidates</h3>
+      <div id="iv-profiles" class="chart"></div>
+      <h3>Sweet spot</h3>
+      <div id="iv-sweetspot" class="chart"></div>
+    </details>
+  </section>
+
+  <section class="panel" data-tab="predict" hidden>
+    <h2>Predict a Formulation</h2>
+    <p class="lede">Forward prediction. Every result carries its cross-validated
+      error and whether it sits inside the tested design space.</p>
     <div class="controls">
       <label>API wt% <input type="number" id="fw-api" value="35" min="0" max="100" step="0.5"></label>
       <label>HPMC wt% <input type="number" id="fw-hpmc" value="40" min="0" max="100" step="0.5"></label>
@@ -187,28 +250,6 @@
       <div id="fw-chart" class="chart"></div>
       <div id="fw-out"></div>
     </div>
-
-    <h3>Inverse design — what should I make?</h3>
-    <p class="hint">Dose fixes the drug load, so that is what you set. The tool
-      searches HPMC grade and polymer content, with lactose as the balance to
-      100% — nothing to reconcile by hand.</p>
-    <div class="controls">
-      <label>API load (wt%) <input type="number" id="iv-api" value="35" min="0" max="100" step="0.5"></label>
-      <label>± tolerance <input type="number" id="iv-api-tol" value="5" min="0" max="30" step="0.5"></label>
-      <label>Goal <select id="iv-goal"></select></label>
-      <span id="iv-prompts" style="display:contents"></span>
-    </div>
-    <div id="iv-weights"></div>
-    <div id="iv-results"></div>
-
-    <h3>Predicted profiles for the top candidates</h3>
-    <div id="iv-profiles" class="chart"></div>
-
-    <h3>Sweet spot</h3>
-    <p class="hint">Where the goal is met, across the tested composition region.
-      Darker means better; blank is outside the design and nothing is proposed
-      there.</p>
-    <div id="iv-sweetspot" class="chart"></div>
   </section>
 
   <section class="panel" data-tab="diagnostics" hidden>
@@ -249,6 +290,7 @@
 
 <footer class="foot">
   <span id="foot-meta"></span>
+  <span id="foot-qa" class="foot-qa"></span>
 </footer>
 
 <script src="data.js"></script>

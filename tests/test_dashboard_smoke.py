@@ -42,29 +42,52 @@ for (const f of ["data.js", "model.js", "doe.js", "formulator.js",
 try { w.document.dispatchEvent(new w.Event("DOMContentLoaded")); }
 catch (e) { errors.push("boot threw: " + e.message); }
 const d = w.document;
-const tabs = {};
-for (const b of Array.from(d.querySelectorAll("#tabs button"))) {
+const tabs = {}, modes = {};
+function record() {
+  const shown = Array.from(d.querySelectorAll(".panel")).filter(p => !p.hidden);
+  if (shown.length !== 1) errors.push(shown.length + " panels visible at once");
+  for (const panel of shown) {
+    tabs[panel.getAttribute("data-tab")] = { chars: panel.textContent.trim().length,
+                                            svg: panel.querySelectorAll("svg").length };
+  }
+}
+function click(b) { b.dispatchEvent(new w.Event("click", { bubbles: true })); }
+/* Walk every mode, every tab in it, and every sub-tab of a grouped tab. */
+for (const m of Array.from(d.querySelectorAll("#modes button"))) {
   try {
-    b.dispatchEvent(new w.Event("click", { bubbles: true }));
-    const name = b.getAttribute("data-target");
-    const panel = d.querySelector('.panel[data-tab="' + name + '"]');
-    tabs[name] = { chars: panel.textContent.trim().length,
-                   svg: panel.querySelectorAll("svg").length };
+    click(m);
+    const mode = m.getAttribute("data-mode");
+    modes[mode] = [];
+    const n = d.querySelectorAll("#tabs button").length;
+    for (let i = 0; i < n; i++) {
+      click(d.querySelectorAll("#tabs button")[i]);
+      record();
+      const subs = d.querySelectorAll("#subtabs button");
+      for (let j = 0; j < subs.length; j++) {
+        click(d.querySelectorAll("#subtabs button")[j]);
+        record();
+      }
+      modes[mode].push(d.querySelectorAll("#tabs button")[i].getAttribute("data-tab-key"));
+    }
   } catch (e) { errors.push("tab threw: " + e.message); }
 }
 process.stdout.write(JSON.stringify({
   tabs,
-  nTabs: d.querySelectorAll("#tabs button").length,
+  modes,
+  nTabs: Object.keys(tabs).length,
   provenanceShown: !d.getElementById("provenance").hidden,
   cvBadge: (d.getElementById("cv-badge").textContent || "").replace(/\s+/g, " ").trim(),
   g1Gate: d.body.innerHTML.indexOf("Insufficient data") >= 0,
   rows: d.querySelectorAll("tbody tr").length,
   tooltips: d.querySelectorAll("abbr.tip").length,
   adminText: (d.getElementById("ad-text") || {}).value || "",
+  targetReachable: !!d.querySelector("#tp-summary .callout.ok"),
+  targetRows: d.querySelectorAll("#tp-results tbody tr").length,
   errors,
 }));
 """
 
+#: Every panel, reached through one mode or the other.
 EXPECTED_TABS = {
     "explorer",
     "figures",
@@ -75,10 +98,17 @@ EXPECTED_TABS = {
     "equivalence",
     "stress",
     "diagnostics",
-    "formulator",
+    "target",
+    "predict",
     "disintegration",
     "guidelines",
     "admin",
+}
+
+#: The top-row tabs of each mode, in order.
+EXPECTED_MODES = {
+    "formulator": ["target", "predict", "substitute", "newapi", "data"],
+    "manuscripts": ["figures", "doe", "disintegration", "qa", "data"],
 }
 
 
@@ -143,7 +173,7 @@ def test_every_tab_renders_content(rendered: dict) -> None:
 
 def test_charts_render_where_expected(rendered: dict) -> None:
     for name in ("explorer", "design", "doe", "surfaces", "equivalence",
-                 "stress", "formulator"):
+                 "stress", "target", "predict"):
         assert rendered["tabs"][name]["svg"] >= 1, f"tab {name} rendered no chart"
 
 
@@ -292,12 +322,35 @@ def test_doe_tab_leads_with_plots_and_takeaways(rendered: dict) -> None:
 
 def test_formulator_offers_goals_not_raw_weights(rendered: dict) -> None:
     """Issue 13: balancing three components and tuning weights by hand is the
-    problem, not the interface. The tool fixes the drug load and picks the rest."""
+    problem, not the interface. The goals survive as the advanced option."""
     html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
     assert 'id="iv-goal"' in html, "no goal selector; weights are still the interface"
-    assert 'id="iv-api"' in html, "drug load is not the fixed input"
     for retired in ('id="iv-w-t50"', 'id="iv-w-p24"'):
         assert retired not in html, f"{retired} still present; raw weight sliders remain"
+
+
+def test_modes_split_tools_from_manuscripts(rendered: dict) -> None:
+    """Two modes over the same panels, each with its own short tab row."""
+    expected = {
+        mode: [k for k in keys if k != "disintegration" or "disintegration" in rendered["tabs"]]
+        for mode, keys in EXPECTED_MODES.items()
+    }
+    if "figures" not in rendered["tabs"]:
+        expected["manuscripts"].remove("figures")
+    assert rendered["modes"] == expected
+
+
+def test_target_profile_tool_leads_the_formulator(rendered: dict) -> None:
+    """The formulator starts from the profile wanted, not from a fixed drug load.
+
+    The default target is a measured formulation's own profile, so the search
+    must find it reachable and offer candidates in more than one grade or load.
+    """
+    html = (DASHBOARD / "index.html").read_text(encoding="utf-8")
+    assert 'id="tp-table"' in html and 'id="tp-lock"' in html
+    assert rendered["targetReachable"], "a measured profile was not reachable as a target"
+    assert rendered["targetRows"] >= 2, "the shortlist offers fewer than two distinct options"
+    assert rendered["tabs"]["target"]["svg"] >= 3, "no design-space map per grade"
 
 
 def test_equivalence_is_framed_as_substitution(rendered: dict) -> None:

@@ -436,6 +436,307 @@
 
     syncPrompts();
     draw();
+
+    renderTarget(D, api, {
+      grades: grades, levels: levels, inHull: inHull, nearestLink: nearestLink,
+      apiRange: apiRange, hpmcRange: hpmcRange, lacRange: lacRange
+    });
+  }
+
+  /* ------------------------------------------- target profile -> design */
+
+  /* Listeners are bound once and call through this, so a re-render with new
+   * data (another API) redraws against that data rather than a stale closure. */
+  var TP = { rows: [], draw: function () {} };
+
+  function defaultBand(t) { return t <= 2 ? 5 : 10; }
+
+  function interpAt(xs, ys, x) {
+    var pts = [];
+    for (var i = 0; i < xs.length; i++) {
+      if (ys[i] !== null && ys[i] !== undefined && isFinite(ys[i])) pts.push([xs[i], ys[i]]);
+    }
+    if (!pts.length) return NaN;
+    if (x <= pts[0][0]) return pts[0][1];
+    for (var j = 1; j < pts.length; j++) {
+      if (x <= pts[j][0]) {
+        var f = (x - pts[j - 1][0]) / (pts[j][0] - pts[j - 1][0] || 1);
+        return pts[j - 1][1] + f * (pts[j][1] - pts[j - 1][1]);
+      }
+    }
+    return pts[pts.length - 1][1];
+  }
+
+  function renderTarget(D, api, ctx) {
+    var $ = api.$, el = api.el, esc = api.esc, fmt = api.fmt,
+        Chart = api.Chart, table = api.table;
+    var M = window.CRModel;
+    if (!$("tp-table")) return;
+    var cv = D.validation.profile_rmse_pct;
+    var tMax = D.meta.plot_max_time_h;
+    var defaultTimes = [1, 2, 4, 8, 12, 24].filter(function (t) { return t <= tMax + 1e-9; });
+
+    /* Measured profiles as starting points: a real formulation is the
+     * quickest honest target, and editing it shows what moves. */
+    var preset = $("tp-preset");
+    preset.innerHTML = "";
+    preset.appendChild(el("option", { value: "" }, "custom (keep table)"));
+    D.profiles.forEach(function (p, i) {
+      preset.appendChild(el("option", { value: String(i) },
+        "measured: case " + p.case + " / " + p.grade));
+    });
+
+    function rowsFromProfile(p) {
+      return defaultTimes.map(function (t) {
+        var v = interpAt(D.grid_h, p.mean_pct, t);
+        return { t: t, pct: Math.round(v * 10) / 10, band: defaultBand(t) };
+      });
+    }
+    var start = Math.floor(D.profiles.length / 2);
+    preset.value = String(start);
+    TP.rows = rowsFromProfile(D.profiles[start]);
+
+    function renderTable() {
+      var host = $("tp-table");
+      host.innerHTML = "";
+      var t = el("table");
+      var head = el("tr");
+      ["time (h)", "target % released", "± band", ""].forEach(function (h) {
+        head.appendChild(el("th", null, h));
+      });
+      var thead = el("thead"); thead.appendChild(head); t.appendChild(thead);
+      var tb = el("tbody");
+      TP.rows.forEach(function (r, i) {
+        var tr = el("tr");
+        ["t", "pct", "band"].forEach(function (k) {
+          var td = el("td");
+          var input = el("input", { type: "number", step: k === "t" ? "0.25" : "0.5",
+            min: "0", value: String(r[k]), "data-row": String(i), "data-key": k });
+          input.addEventListener("input", function () {
+            TP.rows[i][k] = Number(input.value);
+            preset.value = "";
+            TP.draw();
+          });
+          td.appendChild(input);
+          tr.appendChild(td);
+        });
+        var del = el("td");
+        if (TP.rows.length > 2) {
+          var b = el("button", { type: "button", title: "remove this time point" }, "×");
+          b.addEventListener("click", function () {
+            TP.rows.splice(i, 1); renderTable(); TP.draw();
+          });
+          del.appendChild(b);
+        }
+        tr.appendChild(del);
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb);
+      host.appendChild(t);
+    }
+    TP.renderTable = renderTable;
+
+    function validRows() {
+      return TP.rows.filter(function (r) {
+        return isFinite(r.t) && r.t > 0 && r.t <= tMax && isFinite(r.pct) && isFinite(r.band);
+      }).slice().sort(function (a, b) { return a.t - b.t; });
+    }
+
+    TP.draw = function () {
+      var targets = validRows();
+      var lock = $("tp-lock").checked
+        ? { value: Number($("tp-lock-api").value), tol: Number($("tp-lock-tol").value) } : null;
+      var results = targets.length ? M.searchTargetProfile(D.surfaces, ctx.levels, ctx.grades,
+        targets, { apiRange: ctx.apiRange, hpmcRange: ctx.hpmcRange, lacRange: ctx.lacRange,
+          inHull: ctx.inHull, cvRmse: cv, lockApi: lock }) : [];
+      var feasible = results.filter(function (r) { return r.feasible; });
+      var plausible = results.filter(function (r) { return r.plausible; });
+      var accept = feasible.length
+        ? function (r) { return r.feasible; } : function (r) { return r.plausible; };
+      var shortlist = M.diverseShortlist(results, ctx.apiRange, accept);
+      drawSummary(targets, results, feasible, plausible);
+      drawMap(results, shortlist);
+      drawShortlist(targets, shortlist, feasible.length > 0);
+      drawCurves(targets, shortlist.slice(0, 4));
+    };
+
+    function drawSummary(targets, results, feasible, plausible) {
+      var host = $("tp-summary");
+      host.innerHTML = "";
+      var box;
+      if (!targets.length) {
+        box = el("div", { class: "callout warn" });
+        box.textContent = "Enter at least one time point inside 0 to " + tMax + " h.";
+      } else if (feasible.length) {
+        var byGrade = {}, lo = Infinity, hi = -Infinity;
+        feasible.forEach(function (r) {
+          byGrade[r.grade] = (byGrade[r.grade] || 0) + 1;
+          lo = Math.min(lo, r.api); hi = Math.max(hi, r.api);
+        });
+        box = el("div", { class: "callout ok" });
+        box.innerHTML = "<b>Reachable.</b> " + feasible.length + " grid formulations hit every " +
+          "band, across " + Object.keys(byGrade).length + " grade" +
+          (Object.keys(byGrade).length === 1 ? "" : "s") + " (" +
+          Object.keys(byGrade).map(function (g) { return esc(g) + ": " + byGrade[g]; }).join(", ") +
+          ") and drug loads from " + fmt(lo, 1) + " to " + fmt(hi, 1) + " wt%.";
+      } else if (plausible.length) {
+        box = el("div", { class: "callout warn" });
+        box.innerHTML = "<b>Only within model error.</b> No prediction sits inside every band, " +
+          "but " + plausible.length + " do once the cross-validated error of " + fmt(cv, 2) +
+          "% is allowed. Treat these as formulations worth making and measuring, not as " +
+          "ones the model endorses.";
+      } else {
+        box = el("div", { class: "callout danger" });
+        var best = results[0];
+        box.innerHTML = "<b>Not reachable in the tested design space.</b> " +
+          (best ? "The closest formulation misses a band by " + fmt(best.score, 2) +
+            "× its width. " : "") +
+          "Widen the bands, relax a time point, or accept that this profile needs a " +
+          "composition or grade outside what was tested. The tool will not extrapolate.";
+      }
+      host.appendChild(box);
+      var note = el("p", { class: "hint" });
+      note.textContent = "Every prediction carries a cross-validated error of " + fmt(cv, 2) +
+        "% released (leave-one-formulation-out). A band narrower than that asks for more " +
+        "precision than the model has.";
+      host.appendChild(note);
+    }
+
+    function drawMap(results, shortlist) {
+      var host = $("tp-map");
+      host.innerHTML = "";
+      var step = 1.25;
+      ctx.grades.forEach(function (g, gi) {
+        var wrap = el("div", { class: "chart" });
+        var ch = new Chart(330, 270, { l: 48, r: 10, t: 10, b: 40 });
+        ch.scales([ctx.apiRange.lo - 2, ctx.apiRange.hi + 2],
+                  [ctx.hpmcRange.lo - 2, ctx.hpmcRange.hi + 2])
+          .axes("API (wt%)", "HPMC (wt%)");
+        var colour = colourFor(g.grade, gi);
+        results.forEach(function (r) {
+          if (r.grade !== g.grade || !r.plausible) return;
+          var op = r.feasible ? 0.25 + 0.55 * Math.max(0, 1 - r.score) : 0.1;
+          ch.rect(r.api - step / 2, r.hpmc - step / 2, r.api + step / 2, r.hpmc + step / 2,
+                  colour, op);
+        });
+        var seen = {};
+        D.design_points.forEach(function (p) {
+          if (seen[p.case]) return;
+          seen[p.case] = 1;
+          ch.dots([p.api_wt], [p.hpmc_wt], "#1c2330", 2.8, ["case " + p.case]);
+        });
+        shortlist.forEach(function (r) {
+          if (r.grade !== g.grade) return;
+          ch.dots([r.api], [r.hpmc], "#ffffff", 5.5,
+                  [r.grade + " · API " + r.api.toFixed(1) + "% · HPMC " + r.hpmc.toFixed(1) + "%"]);
+        });
+        ch.mount(wrap);
+        wrap.insertBefore(el("div", { class: "panel-title" },
+          g.grade + " (" + Math.round(g.cp || Math.pow(10, g.lv)).toLocaleString() + " cP)"),
+          wrap.firstChild);
+        host.appendChild(wrap);
+      });
+      var lg = el("div", { class: "legend" });
+      lg.innerHTML = '<span><i style="background:#1c2330"></i>measured composition</span>' +
+        '<span><i style="background:#fff;border:1px solid #1c2330"></i>shortlisted candidate</span>';
+      host.appendChild(lg);
+    }
+
+    function drawShortlist(targets, shortlist, strict) {
+      var host = $("tp-results");
+      host.innerHTML = "";
+      if (!shortlist.length) return;
+      var tablet = Number($("tp-tablet").value);
+      var cols = [
+        { key: "grade", label: "grade" }, { key: "load", label: "drug load" },
+        { key: "api", label: "API%", num: true }, { key: "hpmc", label: "HPMC%", num: true },
+        { key: "lac", label: "lactose%", num: true }
+      ];
+      if (tablet > 0) cols.push({ key: "mg", label: "API mg/tablet", num: true });
+      targets.forEach(function (r, i) {
+        cols.push({ key: "p" + i, label: fmt(r.t, 2).replace(/\.?0+$/, "") + " h", num: true });
+      });
+      cols.push({ key: "score", label: "worst miss (× band)", num: true });
+      cols.push({ key: "f2", label: "f2", num: true });
+      cols.push({ key: "src", label: "nearest measured", html: true });
+      var tw = el("div", { class: "tablewrap" });
+      tw.appendChild(table(cols, shortlist.map(function (r) {
+        var row = {
+          grade: r.grade, load: r.loadThird, api: fmt(r.api, 1), hpmc: fmt(r.hpmc, 1),
+          lac: fmt(r.lac, 1), mg: fmt(tablet * r.api / 100, 0), score: fmt(r.score, 2),
+          f2: fmt(r.f2, 0), src: ctx.nearestLink(r.api, r.hpmc, r.grade)
+        };
+        r.pred.forEach(function (v, i) { row["p" + i] = fmt(v, 1); });
+        return row;
+      })));
+      host.appendChild(tw);
+      host.appendChild(el("p", { class: "hint" }, strict
+        ? "All rows sit inside every band. Rows within about 0.2 of each other in worst miss " +
+          "are not separated by anything the data can support, so choose on drug load, " +
+          "grade availability or cost."
+        : "These rows reach the bands only within the cross-validated error."));
+    }
+
+    function drawCurves(targets, top) {
+      var host = $("tp-profiles");
+      host.innerHTML = "";
+      if (!targets.length) return;
+      var times = [];
+      for (var t = D.meta.plot_min_time_h; t <= tMax + 1e-9; t += 0.25) times.push(t);
+      var ch = new Chart(620, 330);
+      ch.scales([D.meta.plot_min_time_h, tMax],
+                [D.meta.plot_min_release_pct, D.meta.plot_max_release_pct])
+        .axes("time (h)", "% released");
+      var tx = targets.map(function (r) { return r.t; });
+      ch.band(tx, targets.map(function (r) { return r.pct - r.band; }),
+              targets.map(function (r) { return r.pct + r.band; }), "#2f6fd0", 0.14);
+      var series = [];
+      top.forEach(function (r, i) {
+        var pred = M.predictProfile(D.surfaces, ctx.levels, r.api, r.hpmc, r.lac, r.lv, times);
+        ch.line(times, pred.curve, colourFor(r.grade, i), { width: 2 });
+        series.push({ xs: times, ys: pred.curve, colour: colourFor(r.grade, i),
+                      path: ch.lastPath, baseWidth: 2, baseOpacity: 1,
+                      label: r.grade + " API " + r.api.toFixed(1) + "% HPMC " + r.hpmc.toFixed(1) + "%" });
+      });
+      ch.dots(tx, targets.map(function (r) { return r.pct; }), "#1c2330", 3.6,
+              targets.map(function (r) { return "target " + r.pct + "% ± " + r.band + " at " + r.t + " h"; }));
+      ch.interactive(series).mount(host);
+      var lg = el("div", { class: "legend" });
+      lg.innerHTML = '<span><i style="background:#2f6fd0;opacity:.35"></i>target band</span>' +
+        top.map(function (r, i) {
+          return '<span><i style="background:' + colourFor(r.grade, i) + '"></i>' +
+            esc(r.grade) + " · API " + r.api.toFixed(1) + "% · HPMC " + r.hpmc.toFixed(1) + "%</span>";
+        }).join("");
+      host.appendChild(lg);
+    }
+
+    if (!TP.bound) {
+      TP.bound = true;
+      $("tp-preset").addEventListener("change", function () {
+        var v = $("tp-preset").value;
+        if (v === "") return;
+        TP.rows = TP.fromProfile(Number(v));
+        TP.renderTable(); TP.draw();
+      });
+      $("tp-add").addEventListener("click", function () {
+        var last = TP.rows[TP.rows.length - 1] || { t: 0, pct: 0 };
+        var t = Math.min(last.t + 2, tMax);
+        TP.rows.push({ t: t, pct: Math.min(last.pct + 10, 100), band: defaultBand(t) });
+        TP.renderTable(); TP.draw();
+      });
+      $("tp-reset").addEventListener("click", function () {
+        TP.rows.forEach(function (r) { r.band = defaultBand(r.t); });
+        TP.renderTable(); TP.draw();
+      });
+      ["tp-lock", "tp-lock-api", "tp-lock-tol", "tp-tablet"].forEach(function (id) {
+        $(id).addEventListener("input", function () { TP.draw(); });
+        $(id).addEventListener("change", function () { TP.draw(); });
+      });
+    }
+    TP.fromProfile = function (i) { return rowsFromProfile(D.profiles[i]); };
+
+    renderTable();
+    TP.draw();
   }
 
   root.CRFormulator = { render: render };

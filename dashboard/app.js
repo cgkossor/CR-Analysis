@@ -385,42 +385,162 @@
   }
 
   /* ------------------------------------------------------------ tabs */
-  var TABS = [
-    ["explorer", "Database Explorer"],
-    ["figures", "Figures"],
-    ["metrics", "Analysis & Metrics"],
-    ["design", "Design Diagnostics"],
-    ["doe", "DoE Analysis"],
-    ["surfaces", "Weibull Surfaces"],
-    ["equivalence", "Equivalence Sets"],
-    ["stress", "Design Stress Test"],
-    ["diagnostics", "Diagnostics"],
-    ["formulator", "Formulator Tool"],
-    ["disintegration", "Disintegration"],
-    ["guidelines", "Guidelines & Limitations"],
-    ["admin", "Admin / Audit"]
-  ];
+  /* Two modes over one set of panels. Formulator holds the tools a formulator
+   * uses to decide what to make; Manuscripts holds the analysis and journal
+   * figures behind the paper. A tab may group several panels, shown through
+   * a second row of sub-tabs, so the top row stays short. The Database
+   * Explorer appears in both: every prediction traces back to it. */
+  var MODES = {
+    formulator: [
+      { key: "target", label: "Design for Target Profile", panels: ["target"] },
+      { key: "predict", label: "Predict a Formulation", panels: ["predict"] },
+      { key: "substitute", label: "Substitute / Grade Swap", panels: ["equivalence"] },
+      { key: "newapi", label: "New-API Run Plan", panels: ["stress"] },
+      { key: "data", label: "Data", panels: ["explorer"] }
+    ],
+    manuscripts: [
+      { key: "figures", label: "Figures", panels: ["figures"] },
+      { key: "doe", label: "DoE Deep-Dive", panels: ["doe", "surfaces", "metrics", "design"] },
+      { key: "disintegration", label: "Disintegration", panels: ["disintegration"] },
+      { key: "qa", label: "Methods & QA", panels: ["diagnostics", "guidelines", "admin"] },
+      { key: "data", label: "Data", panels: ["explorer"] }
+    ]
+  };
+  var PANEL_LABELS = {
+    doe: "DoE Analysis", surfaces: "Weibull Surfaces", metrics: "Metrics",
+    design: "Design Diagnostics", diagnostics: "Diagnostics",
+    guidelines: "Guidelines & Limitations", admin: "Admin / Audit"
+  };
+  var nav = { mode: "formulator", panel: null, last: {} };
 
-  function buildTabs() {
-    var nav = $("tabs");
-    /* Optional sections get a tab only when the workbook supplied their data. */
-    TABS.filter(function (t) {
-      if (t[0] === "disintegration") return !!D.disintegration;
-      if (t[0] === "figures") return !!(D.figures && D.figures.length);
-      return true;
-    }).forEach(function (t, i) {
-      var b = el("button", { role: "tab", "data-target": t[0], "aria-selected": i === 0 ? "true" : "false" }, t[1]);
-      b.addEventListener("click", function () { showTab(t[0]); });
-      nav.appendChild(b);
-    });
+  /* Optional sections get a tab only when the workbook supplied their data. */
+  function panelAvailable(name) {
+    if (name === "disintegration") return !!D.disintegration;
+    if (name === "figures") return !!(D.figures && D.figures.length);
+    return true;
   }
-  function showTab(name) {
+  function tabsFor(mode) {
+    return MODES[mode].map(function (t) {
+      return { key: t.key, label: t.label, panels: t.panels.filter(panelAvailable) };
+    }).filter(function (t) { return t.panels.length; });
+  }
+  /* Every panel that can render, once each, for the audit's render count. */
+  function allPanels() {
+    var seen = {}, out = [];
+    Object.keys(MODES).forEach(function (m) {
+      tabsFor(m).forEach(function (t) {
+        t.panels.forEach(function (p) { if (!seen[p]) { seen[p] = 1; out.push(p); } });
+      });
+    });
+    return out;
+  }
+  function tabHolding(mode, panel) {
+    var tabs = tabsFor(mode);
+    for (var i = 0; i < tabs.length; i++) {
+      if (tabs[i].panels.indexOf(panel) >= 0) return tabs[i];
+    }
+    return null;
+  }
+
+  function renderNav() {
+    Array.prototype.forEach.call(document.querySelectorAll("#modes button"), function (b) {
+      b.setAttribute("aria-selected", b.getAttribute("data-mode") === nav.mode ? "true" : "false");
+    });
+    var current = tabHolding(nav.mode, nav.panel);
+    var top = $("tabs");
+    top.innerHTML = "";
+    tabsFor(nav.mode).forEach(function (t) {
+      var b = el("button", { role: "tab", "data-target": t.panels[0], "data-tab-key": t.key,
+        "aria-selected": current && current.key === t.key ? "true" : "false" }, t.label);
+      b.addEventListener("click", function () {
+        showTab(nav.last[nav.mode + "/" + t.key] || t.panels[0]);
+      });
+      top.appendChild(b);
+    });
+    var sub = $("subtabs");
+    sub.innerHTML = "";
+    sub.hidden = !(current && current.panels.length > 1);
+    if (!sub.hidden) {
+      current.panels.forEach(function (p) {
+        var b = el("button", { role: "tab", "data-target": p,
+          "aria-selected": p === nav.panel ? "true" : "false" }, PANEL_LABELS[p] || p);
+        b.addEventListener("click", function () { showTab(p); });
+        sub.appendChild(b);
+      });
+    }
+    var qa = $("foot-qa");
+    if (qa) {
+      qa.innerHTML = "";
+      if (nav.mode === "formulator") {
+        var link = el("button", { type: "button" }, "Methods & QA");
+        link.addEventListener("click", function () { showTab("diagnostics"); });
+        qa.appendChild(document.createTextNode("· "));
+        qa.appendChild(link);
+      }
+    }
+  }
+
+  /* Show a panel, switching mode only when the current one does not hold it,
+   * so a "view source" link from a tool never throws the reader into the
+   * other half of the app unless it has to. */
+  function showTab(name, mode) {
+    var m = mode || (tabHolding(nav.mode, name) ? nav.mode : null);
+    if (!m) {
+      Object.keys(MODES).forEach(function (k) { if (!m && tabHolding(k, name)) m = k; });
+    }
+    if (!m) return;
+    nav.mode = m;
+    nav.panel = name;
+    var t = tabHolding(m, name);
+    if (t) nav.last[m + "/" + t.key] = name;
+    nav.last[m] = name;
     Array.prototype.forEach.call(document.querySelectorAll(".panel"), function (p) {
       p.hidden = p.getAttribute("data-tab") !== name;
     });
-    Array.prototype.forEach.call(document.querySelectorAll("#tabs button"), function (b) {
-      b.setAttribute("aria-selected", b.getAttribute("data-target") === name ? "true" : "false");
+    renderNav();
+    saveNav();
+  }
+  function selectMode(mode) {
+    if (mode === nav.mode) return;
+    var first = tabsFor(mode)[0];
+    showTab(nav.last[mode] || (first && first.panels[0]), mode);
+  }
+
+  /* Where the reader was, kept per browser. Storage can be unavailable (a
+   * private window, file:// in some browsers, a headless test), and the page
+   * must work the same without it. */
+  function saveNav() {
+    try {
+      window.localStorage.setItem("cr-nav", JSON.stringify({ mode: nav.mode, panel: nav.panel }));
+    } catch (e) { /* not available; navigation still works */ }
+    try {
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, "", "#" + nav.mode + "/" + nav.panel);
+      }
+    } catch (e) { /* file:// or sandboxed frame */ }
+  }
+  function restoredNav() {
+    var want = null;
+    try {
+      var h = String(window.location.hash || "").replace(/^#/, "").split("/");
+      if (h.length === 2 && MODES[h[0]]) want = { mode: h[0], panel: h[1] };
+    } catch (e) { /* ignore */ }
+    if (!want) {
+      try {
+        var raw = window.localStorage.getItem("cr-nav");
+        if (raw) want = JSON.parse(raw);
+      } catch (e) { /* ignore */ }
+    }
+    if (want && MODES[want.mode] && tabHolding(want.mode, want.panel)) return want;
+    return { mode: "formulator", panel: tabsFor("formulator")[0].panels[0] };
+  }
+
+  function buildTabs() {
+    Array.prototype.forEach.call(document.querySelectorAll("#modes button"), function (b) {
+      b.addEventListener("click", function () { selectMode(b.getAttribute("data-mode")); });
     });
+    nav.panel = tabsFor("formulator")[0].panels[0];
+    renderNav();
   }
 
   function goToSource(cs, grade) {
@@ -1291,7 +1411,7 @@
     track("surfaces", renderSurfaces);
     track("equivalence", renderEquivalence);
     track("stress", renderStress);
-    track("formulator", renderForward);
+    track("predict", renderForward);
     track("guidelines", renderGuidelines);
     track("diagnostics", renderDiagnostics);
 
@@ -1302,7 +1422,7 @@
       Chart: Chart, table: table, extent: extent, withTip: withTip
     };
     track("doe", function () { if (window.CRDoe) window.CRDoe.render(D, api); });
-    track("formulator", function () {
+    track("target", function () {
       if (window.CRFormulator) window.CRFormulator.render(D, api);
     });
     track("figures", function () {
@@ -1314,11 +1434,12 @@
 
     /* Last, so it can see how every other tab fared. */
     if (window.CRAudit) {
-      var keys = ["header", "controls"].concat(TABS.map(function (t) { return t[0]; })
+      var keys = ["header", "controls"].concat(allPanels()
         .filter(function (k) { return k !== "admin"; }));
       track("admin", function () { window.CRAudit.render(D, api, keys); });
     }
-    showTab("explorer");
+    var start = restoredNav();
+    showTab(start.panel, start.mode);
   }
 
   if (document.readyState === "loading") {

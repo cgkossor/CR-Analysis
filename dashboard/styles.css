@@ -163,3 +163,34 @@ abbr.tip:hover { color: var(--accent); text-decoration-color: var(--accent); }
 .fg-card figcaption { font-size: 13px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
 .fg-card figcaption b { color: var(--ink); }
 .fg-missing { font-size: 12.5px; color: var(--muted); padding: 24px 12px; text-align: center; background: #f6f7f9; border-radius: 6px; }
+
+/* ---------------------------------------------------------------- modes */
+.mast-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
+.modes { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.modes button {
+  border: 0; background: #fff; padding: 7px 14px; cursor: pointer; font: inherit;
+  color: var(--muted);
+}
+.modes button + button { border-left: 1px solid var(--line); }
+.modes button[aria-selected="true"] { background: var(--accent); color: #fff; font-weight: 600; }
+.api-slot:empty { display: none; }
+.subtabs { background: #f1f4f9; }
+.subtabs button { padding: 7px 12px; font-size: 13px; }
+.foot-qa { margin-left: 12px; }
+.foot-qa button { font: inherit; color: var(--accent); background: none; border: 0; cursor: pointer; padding: 0; text-decoration: underline; }
+
+/* ------------------------------------------------------- target profile */
+.tp-layout { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(280px, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 900px) { .tp-layout { grid-template-columns: 1fr; } }
+.tp-table table { border-collapse: collapse; }
+.tp-table th, .tp-table td { padding: 4px 6px; font-size: 12.5px; text-align: left; }
+.tp-table input[type=number] {
+  width: 72px; font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px;
+}
+.tp-table button { font: inherit; border: 0; background: none; color: var(--danger); cursor: pointer; }
+.tp-map { display: flex; flex-wrap: wrap; gap: 10px; }
+.tp-map .chart { flex: 1 1 300px; }
+.tp-map .legend { flex-basis: 100%; }
+.tp-map .panel-title { font-size: 12.5px; font-weight: 600; margin: 2px 0 4px 6px; }
+details.advanced { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 10px; }
+details.advanced > summary { cursor: pointer; font-weight: 600; }
