@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from pipeline.analysis import SURFACE_RESPONSES, Analysis, run_analysis
 from pipeline.audit import AuditReport, run_audit, save
+from pipeline.data_handling import write as write_data_handling
 from pipeline.design.report import render_markdown as design_markdown
 from pipeline.diagnostics import Diagnostics
 from pipeline.diagnostics import render_console as diag_console
@@ -226,6 +227,10 @@ def _run(args: argparse.Namespace) -> int:
     # Written last so it can see everything, printed first thing a reader needs.
     diagnostics = write_diagnostics(analysis, stress, reports)
     print(f"Diagnostics -> {reports / 'diagnostics.md'} (+ .json)")
+    handling = write_data_handling(analysis, reports)
+    print(f"Data handling -> {reports / 'data_handling.md'} (+ .json): "
+          f"{handling['totals']['spikes_removed']} spike reading(s) removed, "
+          f"{handling['totals']['beyond_window_dropped']} past the window")
 
     # Figures before the payload, so the dashboard can show them.
     if not args.skip_figures:

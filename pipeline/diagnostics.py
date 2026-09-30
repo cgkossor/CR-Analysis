@@ -83,6 +83,11 @@ class Diagnostics:
         return "OK — every check passed."
 
 
+#: Above this share of readings removed as spikes, the filter is flagged: it
+#: is meant for isolated glitches, not for a noisy signal.
+SPIKE_WARN_SHARE = 0.01
+
+
 def _finite(x: float | None) -> bool:
     return x is not None and bool(np.isfinite(x))
 
@@ -112,6 +117,33 @@ def collect(analysis: Analysis, stress: StressTest | None = None) -> Diagnostics
         "" if q.viscosity_source == "workbook" else "using config fallback; confirm values",
     )
     d.add("Provenance", "vessel volume (mL)", "INFO", q.vessel_volume_ml)
+
+    # --- Data handling -----------------------------------------------------
+    db = analysis.db
+    analysed = len(db.profiles)
+    loaded = analysed + db.spikes_removed + db.rows_beyond_window
+    spike_share = db.spikes_removed / loaded if loaded else 0.0
+    d.add("Data handling", "spike filter on", "INFO", bool(config.SPIKE_FILTER))
+    d.add(
+        "Data handling",
+        "spike readings removed",
+        "WARN" if spike_share > SPIKE_WARN_SHARE else "PASS",
+        db.spikes_removed,
+        f"{spike_share:.2%} of {loaded} readings; each is listed in data_handling.md"
+        + (" — a share this high suggests the probe signal, not isolated bubbles"
+           if spike_share > SPIKE_WARN_SHARE else ""),
+    )
+    d.add("Data handling", "readings past the analysis window", "INFO", db.rows_beyond_window,
+          f"trimmed at {config.ANALYSIS_WINDOW_H:g} h")
+    blank = sum(int((~np.isfinite(v)).sum()) for v in analysis.observed_profiles.values())
+    d.add(
+        "Data handling",
+        "blank comparison-grid points",
+        "WARN" if blank else "PASS",
+        blank,
+        "gaps in the record wider than the interpolation limit; see data_handling.md"
+        if blank else "",
+    )
 
     # --- Contents -----------------------------------------------------------
     d.add("Contents", "APIs", "INFO", len(q.apis))

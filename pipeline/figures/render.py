@@ -393,6 +393,53 @@ def draw_design_plane(
     ax.set_ylim(lo, hi + 0.25 * (hi - lo))
 
 
+def render_spike_diagnostic(
+    analysis: Analysis, out: Path, banner: str | None, panels: int = 6
+) -> str | None:
+    """Raw readings of the replicates with most removed spikes, spikes marked."""
+    for stale in out.glob("spikes_removed.png"):
+        stale.unlink()
+    log = analysis.db.spike_log
+    if log is None or log.empty:
+        return None
+    worst = (
+        log.groupby(["id", "replicate"]).size().sort_values(ascending=False).head(panels)
+    )
+    n = len(worst)
+    cols = min(3, n)
+    rows = (n + cols - 1) // cols
+    fig, axes = pub.new_figure(pub.DOUBLE, 2.0 * rows, nrows=rows, ncols=cols,
+                               squeeze=False)
+    flat = list(axes.ravel())
+    prof = analysis.db.profiles
+    for ax, ((rid, rep), count) in zip(flat, worst.items(), strict=False):
+        kept = prof[(prof["id"] == rid) & (prof["replicate"] == rep)]
+        gone = log[(log["id"] == rid) & (log["replicate"] == rep)]
+        ax.plot(kept["time_h"], kept["pct_released"], color=pub.INK, lw=0.6,
+                label="kept readings")
+        ax.plot(gone["time_h"], gone["pct_released"], "x", color=pub.HIGHLIGHT, ms=4,
+                mew=1.0, label="removed as spike")
+        full_release_line(ax)
+        pub.time_axis(ax)
+        pub.percent_axis(ax)
+        # A spike can sit outside the fixed release axis; widen it so it shows.
+        lo, hi = ax.get_ylim()
+        values = gone["pct_released"].to_numpy(dtype=float)
+        ax.set_ylim(min(lo, float(values.min()) - 5), max(hi, float(values.max()) + 5))
+        pub.corner_note(ax, f"{rid}, rep {rep}: {count} removed", "lower right")
+    for ax in flat[n:]:
+        ax.set_visible(False)
+    for i, ax in enumerate(flat[:n]):
+        if i % cols:
+            ax.set_ylabel("")
+        if i < n - cols:
+            ax.set_xlabel("")
+    flat[0].legend(loc="upper left")
+    if n > 1:
+        pub.label_panels(flat[:n])
+    return pub.save(fig, out, "spikes_removed", banner=banner)
+
+
 # --- the figure set ----------------------------------------------------------
 
 
@@ -627,6 +674,17 @@ def render_all(analysis: Analysis, stress: StressTest, out_dir: Path) -> list[Fi
         "a shared scale. Lactose is the balance to 100 wt%.",
         fig,
     )
+
+    # --- diagnostic: removed spikes ----------------------------------------
+    spikes_png = render_spike_diagnostic(analysis, out_dir / "diagnostics", banner)
+    if spikes_png:
+        records.append(FigureRecord(
+            "D01", "diagnostic", 40,
+            "Replicates that lost the most readings to the spike filter: every kept "
+            "reading (line) and each removed reading (red cross). Check that the crosses "
+            "are isolated glitches and not part of the release curve.",
+            f"diagnostics/{spikes_png}",
+        ))
 
     # --- classical DoE ---------------------------------------------------
     records += render_doe_figures(analysis.doe.responses, out_dir, banner)
