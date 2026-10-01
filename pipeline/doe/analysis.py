@@ -177,9 +177,14 @@ def run(
         )
 
         beta = np.array([c.estimate for c in fit.coefficients])
-        reference_v = float(np.median(proc))
+        # The headline traces sit at a real grade (the one nearest the median
+        # viscosity), not at the median itself: with two grades, or unbalanced
+        # cells, the median is a viscosity nobody tested, and the takeaway names
+        # the grade.
+        median_v = float(np.median(proc))
+        nearest = min(grades, key=lambda g: abs(g[1] - median_v))
+        trace_grade, reference_v = nearest[0], nearest[1]
         traces = effects.cox_traces(beta, keep_idx, spec, centroid, None, reference_v, ranges)
-        trace_grade = min(grades, key=lambda g: abs(g[1] - reference_v))[0]
         traces_by_grade = tuple(
             (g[0], tuple(effects.cox_traces(beta, keep_idx, spec, centroid, None, g[1], ranges)))
             for g in grades
