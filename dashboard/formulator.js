@@ -479,7 +479,9 @@
     var M = window.CRModel;
     if (!$("tp-table")) return;
     var cv = D.validation.profile_rmse_pct;
-    var tMax = D.meta.plot_max_time_h;
+    /* Targets stop where the data stop: past the last analysed time the model
+     * would be extrapolating in time, which nothing here is allowed to do. */
+    var tMax = Math.min(D.meta.plot_max_time_h, Math.max.apply(null, D.grid_h));
     var defaultTimes = [1, 2, 4, 8, 12, 24].filter(function (t) { return t <= tMax + 1e-9; });
 
     /* Measured profiles as starting points: a real formulation is the
@@ -492,15 +494,29 @@
         "measured: case " + p.case + " / " + p.grade));
     });
 
+    /* Only times the measured mean actually reaches. A replicate that stopped
+     * early leaves the mean blank after that point; carrying the last value
+     * forward would invent a plateau and make it the target. */
     function rowsFromProfile(p) {
-      return defaultTimes.map(function (t) {
+      if (!p) return [];
+      var last = -Infinity;
+      D.grid_h.forEach(function (t, i) {
+        var v = p.mean_pct[i];
+        if (v !== null && v !== undefined && isFinite(v)) last = Math.max(last, t);
+      });
+      return defaultTimes.filter(function (t) { return t <= last + 1e-9; }).map(function (t) {
         var v = interpAt(D.grid_h, p.mean_pct, t);
         return { t: t, pct: Math.round(v * 10) / 10, band: defaultBand(t) };
       });
     }
     var start = Math.floor(D.profiles.length / 2);
-    preset.value = String(start);
+    preset.value = D.profiles.length ? String(start) : "";
     TP.rows = rowsFromProfile(D.profiles[start]);
+    if (!TP.rows.length) {
+      TP.rows = defaultTimes.map(function (t) {
+        return { t: t, pct: Math.min(100, Math.round(100 * t / (tMax || 24))), band: defaultBand(t) };
+      });
+    }
 
     function renderTable() {
       var host = $("tp-table");
@@ -552,6 +568,11 @@
       var targets = validRows();
       var lock = $("tp-lock").checked
         ? { value: Number($("tp-lock-api").value), tol: Number($("tp-lock-tol").value) } : null;
+      if (lock && !(isFinite(lock.value) && isFinite(lock.tol) && lock.tol >= 0)) {
+        $("tp-summary").innerHTML = '<div class="callout warn">Enter a drug load and a ' +
+          "tolerance to lock to, or untick the lock.</div>";
+        return;
+      }
       var results = targets.length ? M.searchTargetProfile(D.surfaces, ctx.levels, ctx.grades,
         targets, { apiRange: ctx.apiRange, hpmcRange: ctx.hpmcRange, lacRange: ctx.lacRange,
           inHull: ctx.inHull, cvRmse: cv, lockApi: lock }) : [];
@@ -743,7 +764,7 @@
       });
       $("tp-add").addEventListener("click", function () {
         var last = TP.rows[TP.rows.length - 1] || { t: 0, pct: 0 };
-        var t = Math.min(last.t + 2, tMax);
+        var t = Math.min(last.t + 2, TP.tMax);
         TP.rows.push({ t: t, pct: Math.min(last.pct + 10, 100), band: defaultBand(t) });
         TP.renderTable(); TP.draw();
       });
@@ -757,6 +778,7 @@
       });
     }
     TP.fromProfile = function (i) { return rowsFromProfile(D.profiles[i]); };
+    TP.tMax = tMax;
 
     renderTable();
     TP.draw();
