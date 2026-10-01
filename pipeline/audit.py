@@ -74,6 +74,7 @@ SECTIONS: dict[str, str] = {
     "L": "doe",
     "M": "formulator",
     "N": "response space",
+    "P": "manuscript questions",
     "T": "disintegration",
     "O": "dashboard payload",
 }
@@ -616,6 +617,7 @@ def _time(r: AuditReport, db: Database) -> None:
     for h in (8, 12, 24):
         r.add("E", f"profiles_ending_before_{h}h", int((last < h - 1e-9).sum()))
     r.add("E", "profiles_covering_1h", int((first <= 1.0).sum()))
+    _replicate_coverage(r, p)
     vectors = groups["time_h"].apply(lambda s: tuple(np.round(np.sort(s.to_numpy()), 6)))
     r.add("E", "distinct_time_vectors", int(vectors.nunique()))
     r.add(
@@ -732,6 +734,34 @@ def _release(r: AuditReport, db: Database, replicates: pd.DataFrame | None) -> p
     return table
 
 
+def _replicate_coverage(r: AuditReport, p: pd.DataFrame) -> None:
+    """Replicates per formulation, early stops, and how the plots will draw them.
+
+    A replicate that stops early blanks the formulation's mean from there on;
+    one that misses a manual pull used to turn its formulation into a resampled
+    grid on the plots. Both are counted so they show up before a figure does.
+    """
+    from pipeline.figures.render import _native_grid
+
+    per_cell = p.groupby(["case", "grade"])["replicate"].nunique()
+    r.add("E", "replicates_per_formulation_min", int(per_cell.min()) if len(per_cell) else 0)
+    r.add("E", "replicates_per_formulation_max", int(per_cell.max()) if len(per_cell) else 0)
+    short = mismatch = dense = 0
+    for _, group in p.groupby(["case", "grade"]):
+        reps = [g["time_h"].to_numpy(dtype=float) for _, g in group.groupby("replicate")]
+        ends = [float(v.max()) for v in reps if v.size]
+        if ends and max(ends) - min(ends) > 0.5:
+            short += 1
+        _, is_dense = _native_grid(reps)
+        dense += int(is_dense)
+        rounded = {tuple(np.round(np.sort(v) * 60.0)) for v in reps}
+        if not is_dense and len(rounded) > 1:
+            mismatch += 1
+    r.add("E", "formulations_with_replicate_stopping_early", short)
+    r.add("E", "formulations_plotted_as_probe_log", dense)
+    r.add("E", "formulations_manual_schedule_differs_by_replicate", mismatch)
+
+
 def _design(r: AuditReport, db: Database) -> None:
     from pipeline.design.report import design_points
     from pipeline.io.quality import build_quality_report
@@ -763,6 +793,10 @@ def _design(r: AuditReport, db: Database) -> None:
     r.add("G", "design_points_nan_v_coded", int(pts["v_coded"].isna().sum()))
     r.add("G", "grades_per_case_min", int(pts.groupby("case")["grade"].nunique().min()))
     r.add("G", "cases_per_grade_min", int(pts.groupby("grade")["case"].nunique().min()))
+    from pipeline.figures.publication import GRADE_STYLE
+
+    r.add("G", "grades_without_fixed_style",
+          int(sum(1 for g in pts["grade"].astype(str).unique() if g not in GRADE_STYLE)))
 
 
 def _surfaces(r: AuditReport, a: Analysis) -> None:
@@ -900,6 +934,33 @@ def _doe(r: AuditReport, a: Analysis) -> None:
         r.add("L", f"{k}_process_power", fitted.spec.process_power)
         r.add("L", f"{k}_interactions", len(fitted.interactions))
         r.add("L", f"{k}_stats_finite", bool(np.isfinite(fitted.fit.r_squared)))
+        r.add("L", f"{k}_trace_grades_flat", _flat_trace_grades(fitted))
+
+
+#: A grade's Cox traces are "flat" when, together, they span less than this
+#: share of the range measured across the whole design.
+FLAT_TRACE_SHARE = 0.10
+
+
+def _flat_trace_grades(ra: Any) -> int:
+    """Grades whose model slice covers under 10% of the measured range.
+
+    That is the case where a trace plot, autoscaled, reads as a tight band
+    (say 96 to 104%) while measured curves elsewhere span far more.
+    """
+    vals = ra.response.values[ra.response.available]
+    if vals.size < 2:
+        return 0
+    observed = float(np.nanmax(vals) - np.nanmin(vals))
+    if observed <= 0:
+        return 0
+    flat = 0
+    for _, trs in ra.traces_by_grade:
+        ys = np.concatenate([np.asarray(t.y_values, dtype=float) for t in trs]) if trs else []
+        ys = ys[np.isfinite(ys)] if len(ys) else ys
+        if len(ys) and float(np.ptp(ys)) < FLAT_TRACE_SHARE * observed:
+            flat += 1
+    return flat
 
 
 def _formulator(r: AuditReport, a: Analysis) -> None:
@@ -938,6 +999,46 @@ def _response_space(r: AuditReport, a: Analysis) -> None:
     r.add("N", "redundancy_groups", len(s.groups))
     r.add("N", "pca_rows", int(np.asarray(s.scores).shape[0]) if np.asarray(s.scores).ndim else 0)
     r.add("N", "two_dimensional", s.two_dimensional)
+
+
+#: Question status as an integer, so the audit stays numeric.
+STATUS_CODE = {"supported": 0, "directional": 1, "not_supported": 2, "gated": 3,
+               "unavailable": 4}
+
+
+def _manuscript(r: AuditReport, a: Analysis, dt_src: Path, dedicated: bool) -> None:
+    """How each research question was answered, and on how much of the data."""
+    from pipeline import manuscript
+    from pipeline.disintegration.analysis import run_disintegration
+    from pipeline.disintegration.load import load_disintegration
+
+    dt = None
+    try:
+        data = load_disintegration(dt_src, dedicated=dedicated)
+        dt = run_disintegration(a, data) if data is not None else None
+    except Exception:  # the T section already reports why
+        dt = None
+    ms = manuscript.build(a, dt)
+    for q in ms.questions:
+        r.add("P", f"{q.id}_status", STATUS_CODE[q.status])
+        r.add("P", f"{q.id}_claims", len(q.claims))
+    q1 = ms.questions[0].readiness
+    for key in ("cases_used", "cases_total", "grades_used", "grades_total"):
+        r.add("P", f"q1_{key}", int(q1.get(key, 0)))
+    r.add("P", "q2_comparisons_valid", sum(1 for s in ms.swaps if s.valid))
+    r.add("P", "q2_comparisons_invalid", sum(1 for s in ms.swaps if not s.valid))
+    r.add("P", "q2_comparisons_similar", sum(1 for s in ms.swaps if s.similar))
+    q3 = ms.questions[2].readiness
+    r.add("P", "q3_points", int(q3.get("formulations", 0)))
+    r.add("P", "q3_excluded_intact", int(q3.get("excluded_intact", 0)))
+    r.add("P", "q3_excluded_nonfinite", int(q3.get("excluded_nonfinite", 0)))
+    rho = q3.get("index_rho_ln_td")
+    r.add("P", "q3_index_rho_ln_td_x100", round(100 * rho) if rho is not None else -999)
+    r.add("P", "q4_pooled_fit_present",
+          dt is not None and any(f.label == "all grades" for f in dt.correlation.deming))
+    r.add("P", "storyline_supported_claims",
+          sum(1 for c in ms.storyline.claims if c.claim.status == "supported"))
+    r.add("P", "shear_tiers_exported", len(ms.shear))
 
 
 def _count_nulls(value: Any) -> tuple[int, int]:
@@ -1038,6 +1139,9 @@ def run_audit(
         report,
         "T",
         lambda: audit_disintegration(report, dt_src, a, dedicated=disintegration is not None),
+    )
+    _run_stage(
+        report, "P", lambda: _manuscript(report, a, dt_src, disintegration is not None)
     )
     if stress is not None:
         s: StressTest = stress
