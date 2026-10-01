@@ -1,18 +1,25 @@
 """Pipeline entry point.
 
     python -m pipeline.run --input "<database.xlsx>"
+    python -m pipeline.run --input api_a.xlsx --input api_b.xlsx --apis apis.csv
 
 Regenerates every derived artifact from the raw file in one command (AC14). The
 input is opened read-only and never modified (G8); all output goes to
 ``outputs/`` and ``dashboard/data.js``.
+
+One workbook holds one API. With several ``--input`` files each is analysed on
+its own, into ``outputs/<API>/``, and ``data.js`` carries every API for the
+dashboard's API selector. With one, the layout is unchanged.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,8 +30,14 @@ from pipeline.design.report import render_markdown as design_markdown
 from pipeline.diagnostics import Diagnostics
 from pipeline.diagnostics import render_console as diag_console
 from pipeline.diagnostics import write as write_diagnostics
-from pipeline.export.data_js import build_payload, figure_gallery, write_data_js
+from pipeline.export.data_js import (
+    build_payload,
+    figure_gallery,
+    write_api_set_js,
+    write_data_js,
+)
 from pipeline.glossary import render_parameters_md
+from pipeline.io.api_props import load_api_props
 from pipeline.io.load import load_database
 from pipeline.io.quality import render_markdown as quality_markdown
 from pipeline.io.schema import SchemaError
@@ -46,7 +59,12 @@ if TYPE_CHECKING:
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="pipeline.run", description=__doc__)
-    parser.add_argument("--input", required=True, help="path to the dissolution workbook")
+    parser.add_argument(
+        "--input",
+        required=True,
+        action="append",
+        help="path to a dissolution workbook (one API). Repeat for several APIs",
+    )
     parser.add_argument("--outputs", default="outputs", help="directory for derived artifacts")
     parser.add_argument(
         "--dashboard", default="dashboard", help="directory holding the static dashboard"
@@ -62,10 +80,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--disintegration",
         metavar="FILE",
+        action="append",
         help=(
             "a separate workbook holding the disintegration data. Without it, a "
-            "Disintegration sheet inside --input is used when there is one"
+            "Disintegration sheet inside --input is used when there is one. With "
+            "several --input files give one per input, in the same order, using "
+            "'-' for an input that has none"
         ),
+    )
+    parser.add_argument(
+        "--apis",
+        metavar="CSV",
+        help="per-API properties: columns api, solubility_mg_ml, optional solubility_class",
     )
     parser.add_argument(
         "--audit",
@@ -141,7 +167,9 @@ def _print_audit(audit: AuditReport, out_root: Path, path: Path | None = None) -
     print(f"\nAudit saved to {saved}")
 
 
-def _write_reports(analysis: Analysis, stress: StressTest, reports: Path) -> None:
+def _write_reports(
+    analysis: Analysis, stress: StressTest, reports: Path, docs: Path = Path("docs")
+) -> None:
     reports.mkdir(parents=True, exist_ok=True)
     synthetic = analysis.quality.is_synthetic
 
@@ -171,14 +199,47 @@ def _write_reports(analysis: Analysis, stress: StressTest, reports: Path) -> Non
         render_stress(analysis, stress), encoding="utf-8", newline="\n"
     )
 
-    docs = Path("docs")
-    docs.mkdir(exist_ok=True)
+    docs.mkdir(parents=True, exist_ok=True)
     (docs / "parameters.md").write_text(
         render_parameters_md(), encoding="utf-8", newline="\n"
     )
     (docs / "guidelines.md").write_text(
         render_guidelines(analysis, stress), encoding="utf-8", newline="\n"
     )
+
+
+@dataclass
+class ApiRun:
+    """One API's finished run, held until data.js is written."""
+
+    api: str
+    source: str
+    dt_file: str | None
+    out_root: Path
+    analysis: Analysis
+    diagnostics: Diagnostics
+    has_dt: bool
+    gallery: list[dict[str, Any]] | None
+    payload: dict[str, Any]
+    audit: AuditReport
+
+
+def _dt_files(args: argparse.Namespace) -> list[str | None]:
+    """One disintegration file (or None) per --input, in order."""
+    given = args.disintegration or []
+    if not given:
+        return [None] * len(args.input)
+    if len(given) != len(args.input):
+        raise ValueError(
+            f"{len(args.input)} --input file(s) but {len(given)} --disintegration file(s). "
+            "Give one per input, in the same order, with '-' where an input has none."
+        )
+    return [None if f.strip() in ("", "-") else f for f in given]
+
+
+def _safe_name(api: str) -> str:
+    """A folder name for an API label."""
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", api).strip("_") or "API"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -189,25 +250,86 @@ def main(argv: list[str] | None = None) -> int:
         # The run died, but the audit isolates each stage and so can still say
         # where. Printed before the traceback propagates.
         if args.audit:
+            dt = (args.disintegration or [None])[0]
             _print_audit(
-                run_audit(args.input, disintegration=args.disintegration), Path(args.outputs)
+                run_audit(args.input[0], disintegration=None if dt == "-" else dt),
+                Path(args.outputs),
             )
         raise
 
 
 def _run(args: argparse.Namespace) -> int:
-    out_root = Path(args.outputs)
-    reports = out_root / "reports"
-
     try:
-        db = load_database(args.input)
-    except SchemaError as exc:
-        print(f"INGEST FAILED: {exc}", file=sys.stderr)
-        if args.audit:
-            _print_audit(
-                run_audit(args.input, disintegration=args.disintegration), Path(args.outputs)
-            )
+        dt_files = _dt_files(args)
+        props = load_api_props(args.apis) if args.apis else {}
+    except (ValueError, SchemaError) as exc:
+        print(f"INPUT FAILED: {exc}", file=sys.stderr)
         return 2
+
+    multi = len(args.input) > 1
+    runs: list[ApiRun] = []
+    for source, dt_file in zip(args.input, dt_files, strict=True):
+        result = _run_one(args, source, dt_file, multi=multi)
+        if isinstance(result, int):
+            return result
+        if any(r.api == result.api for r in runs):
+            print(f"INPUT FAILED: API {result.api!r} appears in more than one --input "
+                  "workbook. Each API is one workbook.", file=sys.stderr)
+            return 2
+        runs.append(result)
+
+    unknown = sorted(set(props) - {r.api for r in runs})
+    if unknown:
+        print(f"Note: {args.apis} lists API(s) not run: {', '.join(unknown)}")
+    for r in runs:
+        if r.api in props:
+            r.payload["api_props"] = props[r.api]
+
+    dashboard = Path(args.dashboard) / "data.js"
+    data_path = _write_dashboard(runs, props, dashboard)
+    print(f"Dashboard data -> {data_path}" + (f" ({len(runs)} APIs)" if multi else ""))
+
+    if args.check_determinism:
+        for r in runs:
+            code = _check_determinism(r, props)
+            if code:
+                return code
+
+    for r in runs:
+        _finish(args, r, multi=multi)
+    return 0
+
+
+def _write_dashboard(
+    runs: list[ApiRun], props: dict[str, dict[str, Any]], path: Path
+) -> Path:
+    if len(runs) == 1:
+        return write_data_js(runs[0].payload, path)
+    blank: dict[str, Any] = {"solubility_mg_ml": None, "solubility_class": None}
+    return write_api_set_js(
+        {r.api: r.payload for r in runs},
+        {r.api: props.get(r.api, blank) for r in runs},
+        path,
+    )
+
+
+def _run_one(
+    args: argparse.Namespace, source: str, dt_file: str | None, *, multi: bool
+) -> ApiRun | int:
+    """Analyse one API's workbook into its own outputs folder."""
+    try:
+        db = load_database(source)
+    except SchemaError as exc:
+        print(f"INGEST FAILED ({source}): {exc}", file=sys.stderr)
+        if args.audit:
+            _print_audit(run_audit(source, disintegration=dt_file), Path(args.outputs))
+        return 2
+
+    api = str(db.profiles["api"].iloc[0])
+    out_root = Path(args.outputs) / _safe_name(api) if multi else Path(args.outputs)
+    reports = out_root / "reports"
+    if multi:
+        print(f"\n=== {api} ({source}) -> {out_root} ===")
 
     analysis = run_analysis(db)
     stress = _stress(analysis)
@@ -224,7 +346,7 @@ def _run(args: argparse.Namespace) -> int:
     print(f"Recommended minimum design: {stress.recommended_size} of "
           f"{len(analysis.design_points)} runs")
 
-    _write_reports(analysis, stress, reports)
+    _write_reports(analysis, stress, reports, out_root / "docs" if multi else Path("docs"))
     print(f"Reports -> {reports}")
 
     # Written last so it can see everything, printed first thing a reader needs.
@@ -247,14 +369,14 @@ def _run(args: argparse.Namespace) -> int:
     from pipeline.disintegration.__main__ import run_section as run_disintegration_section
 
     try:
-        dt_result = _disintegration(analysis, args.input, args.disintegration)
+        dt_result = _disintegration(analysis, source, dt_file)
     except SchemaError as exc:
         # A problem in the disintegration data must not cost the dissolution
         # analysis. Say so loudly and carry on without the section.
         print(f"DISINTEGRATION SKIPPED (code {exc.code}): {exc}", file=sys.stderr)
         dt_result = None
     dt = run_disintegration_section(
-        analysis, args.disintegration or args.input, out_root,
+        analysis, dt_file or source, out_root,
         figures=not args.skip_figures, result=dt_result,
     ) if dt_result is not None else None
 
@@ -277,56 +399,58 @@ def _run(args: argparse.Namespace) -> int:
             out_root / "figures", Path(args.dashboard), disintegration=dt is not None
         )
     )
-    payload, audit = _payload(
-        analysis, stress, diagnostics, args.input, dt, args.disintegration, gallery
-    )
-    data_path = write_data_js(payload, Path(args.dashboard) / "data.js")
-    print(f"Dashboard data -> {data_path}")
+    payload, audit = _payload(analysis, stress, diagnostics, source, dt, dt_file, gallery)
+    return ApiRun(api, source, dt_file, out_root, analysis, diagnostics, dt is not None,
+                  gallery, payload, audit)
 
-    if args.check_determinism:
-        first = hashlib.sha256(data_path.read_bytes()).hexdigest()
-        # Re-run the whole chain from the raw file: a second pass must reproduce
-        # data.js byte for byte, not merely re-serialise the same objects.
-        repeat = run_analysis(load_database(args.input))
+
+def _check_determinism(run: ApiRun, props: dict[str, dict[str, Any]]) -> int:
+    """Re-run the whole chain from the raw file; the payload must match byte for byte."""
+    with tempfile.TemporaryDirectory() as tmp:
+        first_path = write_data_js(run.payload, Path(tmp) / "first.js")
+        first = hashlib.sha256(first_path.read_bytes()).hexdigest()
+        repeat = run_analysis(load_database(run.source))
         repeat_stress = _stress(repeat)
-        with tempfile.TemporaryDirectory() as tmp:
-            # Recompute the diagnostics as well. Reusing the first run's would
-            # exempt them from the check, which is precisely the part most likely
-            # to pick up a stray timestamp or dict ordering.
-            repeat_diag = write_diagnostics(repeat, repeat_stress, Path(tmp))
-            again = write_data_js(
-                _payload(
-                    repeat, repeat_stress, repeat_diag, args.input,
-                    _disintegration(repeat, args.input, args.disintegration)
-                    if dt is not None else None,
-                    args.disintegration,
-                    gallery,
-                )[0],
-                Path(tmp) / "data.js",
-            )
-            second = hashlib.sha256(again.read_bytes()).hexdigest()
-        if first != second:
-            print(f"DETERMINISM FAILED: {first} != {second}", file=sys.stderr)
-            return 3
-        print(f"Determinism OK: data.js sha256 {first[:16]}... reproduced exactly")
+        # Recompute the diagnostics as well. Reusing the first run's would
+        # exempt them from the check, which is precisely the part most likely
+        # to pick up a stray timestamp or dict ordering.
+        repeat_diag = write_diagnostics(repeat, repeat_stress, Path(tmp))
+        payload = _payload(
+            repeat, repeat_stress, repeat_diag, run.source,
+            _disintegration(repeat, run.source, run.dt_file) if run.has_dt else None,
+            run.dt_file,
+            run.gallery,
+        )[0]
+        if run.api in props:
+            payload["api_props"] = props[run.api]
+        again = write_data_js(payload, Path(tmp) / "again.js")
+        second = hashlib.sha256(again.read_bytes()).hexdigest()
+    if first != second:
+        print(f"DETERMINISM FAILED ({run.api}): {first} != {second}", file=sys.stderr)
+        return 3
+    print(f"Determinism OK ({run.api}): payload sha256 {first[:16]}... reproduced exactly")
+    return 0
 
+
+def _finish(args: argparse.Namespace, run: ApiRun, *, multi: bool) -> None:
     # Printed last so it is the final thing on screen: anything that would make
     # the run untrustworthy should be the reader's last impression, not scrolled
     # off the top behind a list of written files.
     print()
-    print(diag_console(diagnostics))
+    if multi:
+        print(f"=== {run.api} ===")
+    print(diag_console(run.diagnostics))
 
-    if analysis.quality.is_synthetic:
+    if run.analysis.quality.is_synthetic:
         print(
             "\nNOTE: the database declares itself synthetic placeholder material. "
             "Every output carries the provenance banner; no result below is experimental."
         )
     # Always saved (outputs/ is gitignored); printed only when asked for.
-    audit_path = save(audit, reports / "audit.txt")
+    audit_path = save(run.audit, run.out_root / "reports" / "audit.txt")
     if args.audit:
         print()
-        _print_audit(audit, out_root, audit_path)
-    return 0
+        _print_audit(run.audit, run.out_root, audit_path)
 
 
 if __name__ == "__main__":

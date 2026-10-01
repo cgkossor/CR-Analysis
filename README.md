@@ -32,6 +32,37 @@ One command regenerates every artifact from the raw file:
 Then open `dashboard/index.html` by double-clicking it. No server, no build
 step, no internet connection.
 
+The dashboard has two modes, switched in the header. **Formulator** holds the
+tools: design for a target release profile, forward prediction, grade
+substitution and the run plan for a new API. **Manuscripts** holds the
+research questions with their journal figures (`outputs/figures/manuscript/`),
+the storyline across them (`outputs/reports/storyline.md`), and the full DoE
+analysis.
+
+### Several APIs
+
+One workbook holds one API; a workbook with two is refused (schema code 33)
+rather than averaged. Give each API its own `--input`:
+
+```bash
+python -m pipeline.run --input api_a.xlsx --input api_b.xlsx --apis apis.csv
+```
+
+Each API is analysed on its own into `outputs/<API>/`. `data.js` carries all of
+them, and an API selector appears in the dashboard header. `apis.csv` is
+optional and holds the per-API properties used for cross-API work:
+
+```
+api,solubility_mg_ml,solubility_class
+API_1,33,high
+API_2,0.04,low
+```
+
+`solubility_class` may be blank; solubility claims stay gated (G1) until two
+APIs in each class have been run. With disintegration files, give one
+`--disintegration` per `--input` in the same order, with `-` for an API that has
+none.
+
 ## Auditing a database you cannot share
 
 ```bash

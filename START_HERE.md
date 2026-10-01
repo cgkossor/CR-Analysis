@@ -152,6 +152,7 @@ task under **Tasks: Run Task**.
 | The same, faster (no figure files) | `python -m pipeline.run --input "file.xlsx" --skip-figures` | |
 | The same, and print the shareable audit at the end | `python -m pipeline.run --input "file.xlsx" --audit` | |
 | Analyse with disintegration data in their own file | `python -m pipeline.run --input "file.xlsx" --disintegration "dt.xlsx"` | 2b |
+| Analyse several APIs, one workbook each, into `outputs/<API>/` | `python -m pipeline.run --input "a.xlsx" --input "b.xlsx" --apis apis.csv` | |
 | Audit only (shareable, no other outputs) | `python -m pipeline.audit --input "file.xlsx"` | 4 |
 | Audit, with a separate disintegration file | `python -m pipeline.audit --input "file.xlsx" --disintegration "dt.xlsx"` | 4b |
 | Disintegration section only | `python -m pipeline.disintegration --input "file.xlsx" [--disintegration "dt.xlsx"]` | Disintegration: analyse |
@@ -159,8 +160,9 @@ task under **Tasks: Run Task**.
 | Open the dashboard | double-click `dashboard/index.html` | 3 |
 | Run the tests | `python -m pytest` | Run tests |
 
-The dashboard always shows the last workbook `pipeline.run` was given. After
-trying the synthetic workbook, run your real one again before reading results.
+The dashboard always shows the last run of `pipeline.run`: one workbook, or
+every workbook given to it together (pick the API in the header). After trying
+the synthetic workbook, run your real one again before reading results.
 
 ## Running the tests
 
