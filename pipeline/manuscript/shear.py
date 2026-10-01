@@ -7,13 +7,19 @@ vigorous mechanical agitation) and paddle dissolution. A matrix whose gel
 holds together under agitation disintegrates late relative to how fast it
 releases in the paddle; one that is eroded mechanically falls apart early.
 
-The proxy index is therefore
+Slow tablets take longer to disintegrate too, so DT and Td rise together
+(the disintegration section fits ln DT = a + b ln Td by Deming regression).
+A raw ratio Td / DT would then rank tablets mostly by how slow they are,
+whenever b differs from 1. The index is instead the departure from that
+pooled fit:
 
-    shear index = log10(Td / DT)
+    shear index = log10(predicted DT / measured DT)
+                = (a + b ln Td - ln DT) / ln 10
 
 with Td the Weibull time scale of paddle release and DT the geometric-mean
-disintegration time. Higher means the tablet breaks up earlier under
-agitation than its paddle release would suggest: more sensitive to shear.
+disintegration time. Zero means the tablet breaks up when its release speed
+says it should. Positive means it breaks up earlier under agitation than its
+paddle release predicts: more sensitive to shear.
 
 Every place this appears it is labelled a proxy. The two tests differ in
 apparatus, medium volume and end point, so the index ranks formulations; it
@@ -55,20 +61,34 @@ class ShearPoint:
     index: float
 
 
-def points(dt: DisintegrationAnalysis) -> list[ShearPoint]:
-    """The index per formulation, skipping tablets still intact at the end of the test."""
-    m = dt.matched
+def pooled_fit(dt: DisintegrationAnalysis) -> Any:
+    """The all-grades Deming fit of ln DT on ln Td, or None."""
+    return next((f for f in dt.correlation.deming if f.label == "all grades"), None)
+
+
+def points(dt: DisintegrationAnalysis) -> tuple[list[ShearPoint], int, int]:
+    """The index per formulation, and how many were left out (intact, non-finite).
+
+    Tablets still intact at the end of the test have no DT and are skipped.
+    """
+    fit = pooled_fit(dt)
+    if fit is None:
+        return [], 0, 0
     out: list[ShearPoint] = []
-    for _, r in m.iterrows():
+    intact = nonfinite = 0
+    for _, r in dt.matched.iterrows():
         if bool(r.get("dt_censored", False)):
+            intact += 1
             continue
         td, d = float(r.get("td_h", np.nan)), float(r.get("dt_h", np.nan))
         if not (np.isfinite(td) and np.isfinite(d)) or td <= 0 or d <= 0:
+            nonfinite += 1
             continue
+        index = (fit.intercept + fit.slope * np.log(td) - np.log(d)) / np.log(10.0)
         out.append(ShearPoint(int(r["case"]), str(r["grade"]), float(r["api_wt"]),
                               float(r["hpmc_wt"]), float(r["viscosity_cp"]), td, d,
-                              float(np.log10(td / d))))
-    return sorted(out, key=lambda p: (p.case, p.viscosity_cp))
+                              float(index)))
+    return sorted(out, key=lambda p: (p.case, p.viscosity_cp)), intact, nonfinite
 
 
 def tiers(pts: list[ShearPoint]) -> dict[str, dict[str, Any]]:
@@ -94,7 +114,7 @@ def answer(
                    "Disintegration sheet, to compute the shear proxy.",
             status="unavailable",
         ), []
-    pts = points(dt)
+    pts, intact, nonfinite = points(dt)
     if len(pts) < 4:
         return QuestionResult(
             id="q3", short="Shear sensitivity", question=QUESTION,
@@ -109,7 +129,9 @@ def answer(
         columns=("case", "grade", "API wt%", "HPMC wt%", "Td (h)", "DT (h)", "shear index"),
         rows=tuple((p.case, p.grade, num(p.api_wt, 1), num(p.hpmc_wt, 1), num(p.td_h, 2),
                     num(p.dt_h, 2), num(p.index, 2)) for p in reversed(ordered)),
-        note="shear index = log10(Td / DT). " + PROXY_LABEL.capitalize() + ".",
+        note="shear index = log10(DT predicted from Td by the pooled fit / DT measured); "
+             "positive breaks up earlier than its release speed predicts. "
+             + PROXY_LABEL.capitalize() + ".",
     )
 
     claims: list[Claim] = []
@@ -132,6 +154,10 @@ def answer(
             status="directional" if p < 0.05 else "not_supported",
             signal_to_noise=num(abs(rho) * np.sqrt(n - 1), 2),
         ))
+    # The index should not simply track release speed; if it does, the
+    # pooled fit has not removed the speed trend and every ranking inherits it.
+    lt = stats.spearmanr([np.log(p.td_h) for p in pts], idx)
+    speed_rho = float(lt.statistic)
     # Clearest trend first: it is the question's headline claim.
     claims.sort(key=lambda c: -(c.signal_to_noise or 0.0))
     most, least = ordered[-1], ordered[0]
@@ -150,11 +176,14 @@ def answer(
         caveats=(
             "This is a " + PROXY_LABEL + ".",
             "Tablets still intact at the end of the disintegration test are excluded.",
+            f"Residual check: ρ between the index and ln Td is {speed_rho:+.2f}; near zero "
+            "means the index is not just release speed in disguise.",
             "Confirm with dissolution at two or more paddle speeds before claiming shear "
             "sensitivity in a paper.",
         ),
-        readiness={"formulations": n,
-                   "excluded_intact": int(len(dt.matched) - n)},
+        readiness={"formulations": n, "excluded_intact": intact,
+                   "excluded_nonfinite": nonfinite,
+                   "index_rho_ln_td": num(speed_rho, 2)},
     ), pts
 
 
@@ -179,7 +208,7 @@ def render(pts: list[ShearPoint], out: Path, banner: str | None) -> list[FigureR
             ax_b.hlines(np.median(ys), i - 0.25, i + 0.25, color=pub.INK, lw=1)
     for ax in (ax_a, ax_b):
         ax.axhline(0, color=pub.MUTED, lw=0.6, ls="--")
-        ax.set_ylabel("Shear index, log$_{10}$(Td / DT)")
+        ax.set_ylabel("Shear index, log$_{10}$(DT$_{pred}$ / DT)")
     ax_a.set_xlabel("HPMC (wt%)")
     ax_a.legend(frameon=False, loc="best")
     pub.auto_minor(ax_a)
@@ -188,10 +217,11 @@ def render(pts: list[ShearPoint], out: Path, banner: str | None) -> list[FigureR
     pub.label_panels([ax_a, ax_b])
     file = pub.save(fig, out, FIGURE_ID, banner=banner)
     caption = (
-        "Shear-sensitivity proxy. The index log10(Td / DT) compares the Weibull time "
-        "scale of paddle dissolution (Td) with the disintegration time under basket-and-"
-        "disc agitation (DT); higher values mean a tablet breaks up earlier under "
-        "agitation than its paddle release suggests. (A) Index against HPMC content, by "
+        "Shear-sensitivity proxy. The index is log10 of the disintegration time "
+        "predicted from the paddle-dissolution time scale Td (pooled Deming fit of ln DT "
+        "on ln Td) over the measured disintegration time under basket-and-disc agitation; "
+        "positive values mean a tablet breaks up earlier under agitation than its release "
+        "speed predicts. (A) Index against HPMC content, by "
         "grade. (B) Index by grade; bars are medians. A proxy from two different "
         "apparatus, not a direct measurement of the response to paddle speed."
     )

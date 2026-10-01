@@ -130,7 +130,10 @@ def answer(analysis: Analysis) -> tuple[QuestionResult, list[Swap]]:
         rho = float(stats.spearmanr([s.hpmc_wt for s in pair], [s.f2 for s in pair]).statistic)
         cut = _threshold_hpmc(pair)
         status: Status
-        if cut is not None:
+        if ok and len(ok) == len(pair):
+            text = f"{ga} and {gb} are interchangeable at every tested composition."
+            status = "supported"
+        elif cut is not None:
             text = f"{ga} and {gb} are interchangeable above about {cut:.0f} wt% HPMC."
             status = "supported"
         elif ok:

@@ -17,10 +17,12 @@ effect is clear of measurement noise at all.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pandas as pd
 from scipy import stats
 
 from pipeline.manuscript.model import Claim, QuestionResult, Status, Table, num
@@ -63,6 +65,9 @@ class Decomposition:
     label: str
     n_cases: int
     n_grades: int
+    #: Cases and grades in the data, before cells were dropped for a full grid.
+    n_cases_total: int
+    n_grades_total: int
     n_reps: float
     share_composition: float
     share_grade: float
@@ -82,8 +87,8 @@ def decompose(analysis: Analysis, key: str, label: str) -> Decomposition | None:
         return None
     frame = reps[["case", "grade", key]].dropna()
     cells = frame.groupby(["case", "grade"])[key].agg(["mean", "var", "count"]).reset_index()
-    means = cells.pivot(index="case", columns="grade", values="mean")
-    means = means.dropna(axis=0, how="any")
+    full = cells.pivot(index="case", columns="grade", values="mean")
+    means = complete_grid(full)
     a, b = means.shape
     if a < 3 or b < 2:
         return None
@@ -119,12 +124,34 @@ def decompose(analysis: Analysis, key: str, label: str) -> Decomposition | None:
     rho_h = stats.spearmanr(comp["hpmc_wt"], row.ravel()).statistic
     rho_a = stats.spearmanr(comp["api_wt"], row.ravel()).statistic
     return Decomposition(
-        key=key, label=label, n_cases=a, n_grades=b, n_reps=n_rep,
+        key=key, label=label, n_cases=a, n_grades=b,
+        n_cases_total=int(full.shape[0]), n_grades_total=int(full.shape[1]), n_reps=n_rep,
         share_composition=ss_case / total, share_grade=ss_grade / total,
         share_interaction=ss_int / total, p_composition=p_c, p_grade=p_g,
         p_interaction=p_i, f_composition=f_c,
         rho_hpmc=float(rho_h), rho_api=float(rho_a),
     )
+
+
+def complete_grid(means: pd.DataFrame) -> pd.DataFrame:
+    """The largest complete case x grade block of a table with missing cells.
+
+    The decomposition needs every case in every grade. Dropping cases until the
+    grid is full can throw away nearly everything when one grade was run for
+    only a few cases; dropping that grade instead keeps the rest. Every subset
+    of at least two grades is tried (there are only a handful) and the one that
+    keeps the most cells wins, ties going to more grades.
+    """
+    best = means.iloc[0:0, 0:0]
+    best_key = (-1, -1)
+    cols = list(means.columns)
+    for k in range(len(cols), 1, -1):
+        for subset in combinations(cols, k):
+            block = means[list(subset)].dropna(axis=0, how="any")
+            key = (block.shape[0] * block.shape[1], block.shape[1])
+            if key > best_key:
+                best, best_key = block, key
+    return best
 
 
 def _dominant(d: Decomposition) -> str | None:
@@ -172,6 +199,12 @@ def answer(analysis: Analysis) -> tuple[QuestionResult, list[Decomposition]]:
     mean_g = float(np.mean([d.share_grade for d in time_decs])) if time_decs else 0.0
     mean_i = float(np.mean([d.share_interaction for d in time_decs])) if time_decs else 0.0
 
+    # A decomposition on part of the design describes that part only.
+    partial = any(d.n_cases < d.n_cases_total or d.n_grades < d.n_grades_total for d in decs)
+    used = min(decs, key=lambda d: d.n_cases * d.n_grades)
+    coverage = (f"{used.n_cases} of {used.n_cases_total} compositions x {used.n_grades} of "
+                f"{used.n_grades_total} grades")
+
     claims: list[Claim] = []
     status: Status
     if len(comp_led) > len(time_decs) / 2:
@@ -190,8 +223,8 @@ def answer(analysis: Analysis) -> tuple[QuestionResult, list[Decomposition]]:
         effect=f"{100 * lead_share:.0f}% vs {100 * other_share:.0f}% of the spread "
                f"(mean over {len(time_decs)} release responses)",
         uncertainty=f"dominant in {len(comp_led if lead == 'composition' else grade_led)} "
-                    f"of {len(time_decs)} responses",
-        status=status,
+                    f"of {len(time_decs)} responses; {coverage}",
+        status="directional" if partial else status,
         signal_to_noise=num(lead_share / other_share, 2) if other_share > 0 else None,
     ))
 
@@ -199,7 +232,7 @@ def answer(analysis: Analysis) -> tuple[QuestionResult, list[Decomposition]]:
     clear = [d for d in material if np.isfinite(d.p_interaction) and d.p_interaction < 0.05]
     lever = analysis.lever_effects
     fold = ""
-    if len(lever) >= 2:
+    if len(lever) >= 2 and np.isfinite(lever["fold_change_td"]).all():
         first, last = lever.iloc[0], lever.iloc[-1]
         fold = (f"; +10 wt% HPMC multiplies Td by ×{first['fold_change_td']:.2f} at "
                 f"{first['grade']} but ×{last['fold_change_td']:.2f} at {last['grade']}")
@@ -220,8 +253,8 @@ def answer(analysis: Analysis) -> tuple[QuestionResult, list[Decomposition]]:
     if speed:
         med = float(np.median(speed))
         claims.append(Claim(
-            text=("Within composition, more HPMC slows release." if med < 0 else
-                  "Within composition, more HPMC does not slow release."),
+            text=("Across compositions, more HPMC slows release." if med < 0 else
+                  "Across compositions, more HPMC does not slow release."),
             effect=f"median ρ between HPMC wt% and release speed {med:+.2f}",
             uncertainty=f"n = {time_decs[0].n_cases} compositions, {len(speed)} responses",
             status="supported" if abs(med) >= 0.7 else "directional",
@@ -257,10 +290,17 @@ def answer(analysis: Analysis) -> tuple[QuestionResult, list[Decomposition]]:
         caveats=(
             "p-values use within-batch replicate variance and are optimistic; the shares "
             "are the effect sizes.",
-            "Composition is 11 mixtures of three components, so 'composition' bundles API, "
-            "HPMC and lactose together. The ρ columns say which component carries it.",
-        ),
-        readiness={"formulations": int(decs[0].n_cases * decs[0].n_grades),
+            f"Composition is {used.n_cases_total} mixtures of three components, so "
+            "'composition' bundles API, HPMC and lactose together. The ρ columns say which "
+            "component carries it.",
+        ) + ((
+            f"Cells are missing from the case x grade grid, so the decomposition uses the "
+            f"largest complete block: {coverage}. It describes that block, not the whole "
+            "design, and is held at directional.",
+        ) if partial else ()),
+        readiness={"formulations": int(used.n_cases * used.n_grades),
+                   "cases_used": used.n_cases, "cases_total": used.n_cases_total,
+                   "grades_used": used.n_grades, "grades_total": used.n_grades_total,
                    "replicates_per_cell": num(decs[0].n_reps, 1),
                    "responses": len(decs)},
     ), decs
@@ -296,6 +336,9 @@ def render(
     ax_a.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncols=3, frameon=False)
 
     lever = analysis.lever_effects
+    lever = lever[np.isfinite(lever["fold_change_td"])]
+    if lever.empty:
+        return []
     grades = list(lever["grade"])
     xs = np.arange(len(grades))
     colours = [pub.grade_style(g, i).colour for i, g in enumerate(grades)]

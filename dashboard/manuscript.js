@@ -76,8 +76,9 @@
       grid.appendChild(card);
     });
     if (!shown && ids.length) {
-      return el("p", { class: "hint" }, "Figures for this question were not rendered in " +
-        "the last run (--skip-figures). Run the pipeline without it to draw them.");
+      return el("p", { class: "hint" }, "No figure for this question in the last run: " +
+        "either figures were skipped (--skip-figures) or there were too few points to " +
+        "draw one. The question's tables below still hold the numbers.");
     }
     return grid;
   }
@@ -118,8 +119,8 @@
     host.appendChild(el("div", { class: "callout ok" }, S.lead));
 
     var cards = el("div", { class: "cards" });
-    [["formulations", S.data.formulations], ["replicates each", S.data.replicates],
-     ["censored at t80", S.data.censored_formulations],
+    [["formulations", S.data.formulations], ["replicates (most per formulation)", S.data.replicates],
+     ["formulations with any censoring", S.data.censored_formulations],
      ["CV profile error %", fmt(S.data.cv_profile_rmse_pct, 2)]].forEach(function (c) {
       var card = el("div", { class: "card" });
       card.appendChild(el("small", null, c[0]));
