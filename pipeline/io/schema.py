@@ -64,6 +64,8 @@ SCHEMA_ERROR_CODES: Final[dict[int, str]] = {
     30: "no tablet-mass columns",
     31: "non-positive dose",
     32: "grade without nominal viscosity",
+    33: "more than one API in one workbook",
+    34: "API properties file malformed",
 }
 
 _ROLE_CODES: Final[dict[str, int]] = {"ID": 11, "case": 13, "API name": 15, "HPMC grade": 17}

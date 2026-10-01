@@ -214,6 +214,17 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
         records.append(part)
 
     long = pd.concat(records, ignore_index=True)
+    # One workbook is one API. Every model downstream keys formulations on
+    # (case, grade), so a second API would be averaged into the first as if
+    # it were more replicates: wrong numbers with nothing to show for it.
+    apis = sorted(str(a) for a in long["api"].dropna().unique())
+    if len(apis) > 1:
+        raise SchemaError(
+            f"The workbook holds {len(apis)} APIs ({', '.join(apis)}). Supply one "
+            "workbook per API and pass each with its own --input; the runs are then "
+            "compared side by side.",
+            33,
+        )
     long["time_h"] = long["time_h"].astype(float) * schema.time_to_hours
     long["conc_ug_ml"] = long["conc_ug_ml"].astype(float) * schema.conc_to_ug_per_ml
     long["tablet_mass_mg"] = long["tablet_mass_mg"].astype(float) * schema.mass_to_mg
