@@ -269,13 +269,17 @@ def _run(args: argparse.Namespace) -> int:
     multi = len(args.input) > 1
     runs: list[ApiRun] = []
     for source, dt_file in zip(args.input, dt_files, strict=True):
-        result = _run_one(args, source, dt_file, multi=multi)
+        result = _run_one(args, source, dt_file, multi=multi,
+                          taken={_safe_name(r.api) for r in runs})
         if isinstance(result, int):
+            if runs:
+                # Earlier APIs already refreshed their outputs folders, but
+                # data.js is only written once every input has run, so it still
+                # holds the previous run. Say so rather than let the two mix.
+                print(f"Stopped: outputs/ was refreshed for {', '.join(r.api for r in runs)}, "
+                      "but dashboard/data.js was NOT updated and still shows the previous "
+                      "run.", file=sys.stderr)
             return result
-        if any(r.api == result.api for r in runs):
-            print(f"INPUT FAILED: API {result.api!r} appears in more than one --input "
-                  "workbook. Each API is one workbook.", file=sys.stderr)
-            return 2
         runs.append(result)
 
     unknown = sorted(set(props) - {r.api for r in runs})
@@ -314,7 +318,8 @@ def _write_dashboard(
 
 
 def _run_one(
-    args: argparse.Namespace, source: str, dt_file: str | None, *, multi: bool
+    args: argparse.Namespace, source: str, dt_file: str | None, *, multi: bool,
+    taken: set[str] | None = None,
 ) -> ApiRun | int:
     """Analyse one API's workbook into its own outputs folder."""
     try:
@@ -325,7 +330,14 @@ def _run_one(
             _print_audit(run_audit(source, disintegration=dt_file), Path(args.outputs))
         return 2
 
-    api = str(db.profiles["api"].iloc[0])
+    api = str(db.profiles["api"].dropna().iloc[0])
+    # Checked before anything is written. Folder names, not raw labels: "API 1"
+    # and "API_1" would share outputs/API_1 and the second would overwrite.
+    if taken and _safe_name(api) in taken:
+        print(f"INPUT FAILED: API {api!r} ({source}) appears in more than one --input "
+              "workbook, or shares an output folder name with another. Each API is one "
+              "workbook with a distinct name.", file=sys.stderr)
+        return 2
     out_root = Path(args.outputs) / _safe_name(api) if multi else Path(args.outputs)
     reports = out_root / "reports"
     if multi:

@@ -163,3 +163,13 @@ def test_dashboard_offers_and_honours_the_api_choice(two_api_run: Path) -> None:
     assert second["errors"] == []
     assert second["selected"] == "API_B" and second["subtitle"].startswith("API_B")
     assert second["hash"] == "#manuscripts/q1@API_B", "navigation dropped the API"
+
+
+def test_api_names_sharing_a_folder_are_refused(tmp_path: Path) -> None:
+    """'API 1' and 'API_1' would both write outputs/API_1; the second must not run."""
+    other = make_api_workbook(_workbook(), tmp_path / "spaced.xlsx", "API 1", 1.0)
+    out = tmp_path / "outputs"
+    code = main(["--input", str(_workbook()), "--input", str(other),
+                 "--outputs", str(out), "--dashboard", str(tmp_path / "d"), "--skip-figures"])
+    assert code == 2
+    assert not (tmp_path / "d" / "data.js").exists(), "data.js written after a failed input"
