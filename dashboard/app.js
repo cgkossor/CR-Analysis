@@ -7,6 +7,27 @@
 (function () {
   "use strict";
 
+  /* With several APIs, data.js carries one payload per API and the header
+   * selects one. The choice is made before anything renders, from the URL
+   * ("#mode/panel@API") or the last one used, so every view below sees a
+   * single API's data exactly as it would in a one-API run. Switching reloads
+   * the page, which rebuilds every tab against the new data. */
+  var API_SET = window.CR_API_SET || null;
+  var BY_API = window.CR_DATA_BY_API || null;
+  var CURRENT_API = null;
+  (function pickApi() {
+    if (!API_SET || !BY_API) return;
+    var want = null;
+    try {
+      var m = /@([^/]+)$/.exec(String(window.location.hash || ""));
+      if (m) want = decodeURIComponent(m[1]);
+    } catch (e) { /* ignore */ }
+    if (!want) {
+      try { want = window.localStorage.getItem("cr-api"); } catch (e) { /* ignore */ }
+    }
+    CURRENT_API = want && BY_API[want] ? want : API_SET.order[0];
+    window.CR_DATA = BY_API[CURRENT_API];
+  })();
   var D = window.CR_DATA;
   var GRADE_COLOUR = { K100LV: "#3b7dd8", K4M: "#d9822b", K100M: "#8e5bb5" };
   var FALLBACK = ["#3b7dd8", "#d9822b", "#8e5bb5", "#3aa17e", "#c0504d", "#7a8494"];
@@ -524,14 +545,16 @@
     } catch (e) { /* not available; navigation still works */ }
     try {
       if (window.history && window.history.replaceState) {
-        window.history.replaceState(null, "", "#" + nav.mode + "/" + nav.panel);
+        window.history.replaceState(null, "", "#" + nav.mode + "/" + nav.panel +
+          (CURRENT_API ? "@" + encodeURIComponent(CURRENT_API) : ""));
       }
     } catch (e) { /* file:// or sandboxed frame */ }
   }
   function restoredNav() {
     var want = null;
     try {
-      var h = String(window.location.hash || "").replace(/^#/, "").split("/");
+      var h = String(window.location.hash || "").replace(/^#/, "").replace(/@.*$/, "")
+        .split("/");
       if (h.length === 2 && MODES[h[0]]) want = { mode: h[0], panel: h[1] };
     } catch (e) { /* ignore */ }
     if (!want) {
@@ -1343,6 +1366,49 @@
     return '<abbr class="tip" title="' + esc(tip) + '">' + esc(label) + "</abbr>";
   }
 
+  /* ------------------------------------------------------ API selector */
+  function solubilityText(props) {
+    if (!props || props.solubility_mg_ml === null || props.solubility_mg_ml === undefined) {
+      return "solubility not given";
+    }
+    return trimNum(props.solubility_mg_ml) + " mg/mL" +
+      (props.solubility_class ? ", " + props.solubility_class : "");
+  }
+
+  function renderApiSlot() {
+    var slot = $("api-slot");
+    if (!slot) return;
+    slot.innerHTML = "";
+    if (!API_SET) {
+      /* One API: name it, with its solubility when apis.csv supplied one. */
+      if (D.api_props) {
+        slot.appendChild(el("span", { class: "api-one",
+          title: "API solubility from --apis" },
+          D.quality.apis.join(", ") + " · " + solubilityText(D.api_props)));
+      }
+      return;
+    }
+    var label = el("label", { class: "api-pick" }, "API ");
+    var select = el("select", { id: "api-select", "aria-label": "API" });
+    API_SET.order.forEach(function (name) {
+      var opt = el("option", { value: name },
+        name + " (" + solubilityText(API_SET.props[name]) + ")");
+      if (name === CURRENT_API) opt.selected = true;
+      select.appendChild(opt);
+    });
+    select.addEventListener("change", function () {
+      var next = select.value;
+      try { window.localStorage.setItem("cr-api", next); } catch (e) { /* ignore */ }
+      try {
+        window.location.hash = "#" + nav.mode + "/" + nav.panel + "@" +
+          encodeURIComponent(next);
+        window.location.reload();
+      } catch (e) { /* a sandbox without navigation keeps the current API */ }
+    });
+    label.appendChild(select);
+    slot.appendChild(label);
+  }
+
   /* ----------------------------------------------------------- boot */
   function boot() {
     if (!D) {
@@ -1356,6 +1422,7 @@
     var track = window.CRAudit ? window.CRAudit.track : function (key, fn) { fn(); };
 
     track("header", function () {
+      renderApiSlot();
       if (D.meta.is_synthetic) {
         var p = $("provenance");
         p.hidden = false;
