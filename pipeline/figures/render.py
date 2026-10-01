@@ -121,16 +121,30 @@ class MeasuredProfile:
 def _native_grid(times: list[np.ndarray]) -> tuple[np.ndarray, bool]:
     """The replicates' own schedule, and whether it is densely logged.
 
-    Replicates sharing one clock (manual pulls) keep their exact times. Probe
-    logs, each on its own clock, get a regular grid at their median interval.
+    Dense means a probe log: any replicate with at least
+    :data:`config.SPIKE_MIN_READINGS` readings, each replicate on its own clock.
+    Those get a regular grid at their median interval. Anything sparser is
+    manual pulls and keeps its real times: the union of every replicate's
+    times (to the minute), so one replicate missing a pull, or clocks a few
+    seconds apart, never turns a pulled schedule into a synthetic grid.
     """
     window = config.ANALYSIS_WINDOW_H + 1e-9
-    first = times[0]
-    if all(v.shape == first.shape and np.allclose(v, first) for v in times):
-        return first[first <= window], False
-    step = float(np.median(np.concatenate([np.diff(v) for v in times if v.size > 1])))
-    end = min(float(v.max()) for v in times)
-    end = min(end, config.ANALYSIS_WINDOW_H)
+    kept = [v[np.isfinite(v) & (v <= window)] for v in times]
+    kept = [v for v in kept if v.size]
+    if not kept:
+        return np.array([0.0]), False
+    union = np.unique(np.round(np.concatenate(kept) * 60.0) / 60.0)
+    dense = max(v.size for v in kept) >= config.SPIKE_MIN_READINGS
+    if not dense:
+        return union, False
+    diffs = np.concatenate([np.diff(v) for v in kept if v.size > 1])
+    diffs = diffs[diffs > 1e-9]
+    if not diffs.size:
+        return union, False
+    step = float(np.median(diffs))
+    # Out to the longest replicate; the mean is blank wherever any replicate
+    # has stopped, which shows the truncation instead of hiding it.
+    end = min(max(float(v.max()) for v in kept), config.ANALYSIS_WINDOW_H)
     grid = np.arange(0.0, end + 1e-9, step)
     if end - grid[-1] > 1e-6:
         grid = np.append(grid, end)

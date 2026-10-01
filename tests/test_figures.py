@@ -127,3 +127,19 @@ def test_spread_labels_enforces_the_gap() -> None:
     ordered = sorted(ys)
     assert all(b - a >= 0.5 - 1e-9 for a, b in pairwise(ordered))
     assert ys[3] == pytest.approx(5.0)
+
+
+def test_a_missed_manual_pull_keeps_the_real_schedule() -> None:
+    """One replicate missing one pull must not turn manual pulls into a resampled grid."""
+    import numpy as np
+
+    from pipeline.figures.render import _native_grid
+
+    pulls = np.array([0.0, 0.25, 0.5, 1, 2, 4, 6, 8, 12, 24])
+    grid, dense = _native_grid([pulls, pulls, np.delete(pulls, 3)])
+    assert not dense
+    assert np.allclose(grid, pulls), "the union of the pulled times should be kept"
+
+    # Duplicated timestamps give a zero median step; that must not crash.
+    grid, _ = _native_grid([np.zeros(40), np.zeros(40)])
+    assert grid.size >= 1
