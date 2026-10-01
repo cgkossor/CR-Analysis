@@ -142,28 +142,65 @@
       $("doe-interaction").appendChild(lg);
     }
 
+    /* One panel per grade on a shared axis. A single grade's slice, autoscaled,
+     * once made a near-flat line at about 100% read as "everything releases
+     * fully" while measured curves elsewhere never reached 80%. The axis also
+     * takes in the measured range, so the slice is seen against the data. */
+    /* Takeaways are written once for the Markdown reports, where **x** is
+     * bold. Escape first, then turn only that markup into <b>. */
+    function prose(text) {
+      return esc(text || "").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+    }
+
     function drawTraces(r) {
-      var ch = new Chart(560, 320);
-      var all = [];
-      r.traces.forEach(function (t) { all = all.concat(t.y); });
-      var xs = [];
-      r.traces.forEach(function (t) { xs = xs.concat(t.x); });
-      ch.scales(extent(xs, 0.02), extent(all))
-        .axes("component (wt%)", r.label + " (" + r.units + ")");
-      var series = [];
-      r.traces.forEach(function (t, i) {
-        ch.line(t.x, t.y, FALLBACK[i % FALLBACK.length], { width: 2.2 });
-        series.push({ xs: t.x, ys: t.y, colour: FALLBACK[i % FALLBACK.length],
-                      path: ch.lastPath, baseWidth: 2.2, baseOpacity: 1,
-                      label: t.label });
+      var host = $("doe-traces");
+      host.innerHTML = "";
+      var panels = r.traces_by_grade && r.traces_by_grade.length
+        ? r.traces_by_grade : [{ grade: "", traces: r.traces }];
+      var all = [], xs = [];
+      panels.forEach(function (p) {
+        p.traces.forEach(function (t) { all = all.concat(t.y); xs = xs.concat(t.x); });
       });
-      ch.interactive(series).mount($("doe-traces"));
+      if (r.observed_range) all = all.concat(r.observed_range);
+      var yd = extent(all), xd = extent(xs, 0.02);
+      var row = el("div", { class: "trace-row" });
+      panels.forEach(function (p) {
+        var ch = new Chart(330, 280, { l: 52, r: 10, t: 22, b: 40 });
+        ch.scales(xd, yd).axes("component (wt%)", r.label + " (" + r.units + ")");
+        if (r.observed_range) {
+          ch.hline(r.observed_range[0], "#9aa3b2", "2 3");
+          ch.hline(r.observed_range[1], "#9aa3b2", "2 3");
+        }
+        var series = [];
+        p.traces.forEach(function (t, i) {
+          ch.line(t.x, t.y, FALLBACK[i % FALLBACK.length], { width: 2.2 });
+          series.push({ xs: t.x, ys: t.y, colour: FALLBACK[i % FALLBACK.length],
+                        path: ch.lastPath, baseWidth: 2.2, baseOpacity: 1,
+                        label: (p.grade ? p.grade + " · " : "") + t.label });
+        });
+        var title = api.svgEl("text", { x: 56, y: 14, "font-size": 12, "font-weight": 600,
+                                        fill: "#1c2330" });
+        title.textContent = p.grade;
+        ch.svg.appendChild(title);
+        var cell = el("div", { class: "chart" });
+        ch.interactive(series).mount(cell);
+        row.appendChild(cell);
+      });
+      host.appendChild(row);
+      var ref = r.trace_reference || {};
       var lg = el("div", { class: "legend" });
-      lg.innerHTML = r.traces.map(function (t, i) {
+      lg.innerHTML = panels[0].traces.map(function (t, i) {
         return '<span><i style="background:' + FALLBACK[i % FALLBACK.length] + '"></i>' +
           esc(t.label) + "</span>";
-      }).join("");
-      $("doe-traces").appendChild(lg);
+      }).join("") +
+        (r.observed_range ? '<span><i style="background:#9aa3b2"></i>measured range ' +
+          fmt(r.observed_range[0], 1) + " to " + fmt(r.observed_range[1], 1) + "</span>" : "");
+      host.appendChild(lg);
+      host.appendChild(el("p", { class: "hint" },
+        "A model slice, not measured curves: each line varies one component from the " +
+        "reference composition (API " + (ref.api || "?") + " / HPMC " + (ref.hpmc || "?") +
+        " / lactose " + (ref.lactose || "?") + " wt%), at that grade. Dotted lines mark " +
+        "the range actually measured across the design."));
     }
 
     function drawPareto(r) {
@@ -278,11 +315,11 @@
         nb.appendChild(c);
       });
 
-      $("doe-take-contour").innerHTML = esc(r.takeaways.contour);
-      $("doe-take-interaction").innerHTML = esc(r.takeaways.interaction);
-      $("doe-take-traces").innerHTML = esc(r.takeaways.traces);
-      $("doe-take-effects").innerHTML = esc(r.takeaways.effects);
-      $("doe-take-anova").innerHTML = esc(r.takeaways.anova)
+      $("doe-take-contour").innerHTML = prose(r.takeaways.contour);
+      $("doe-take-interaction").innerHTML = prose(r.takeaways.interaction);
+      $("doe-take-traces").innerHTML = prose(r.takeaways.traces);
+      $("doe-take-effects").innerHTML = prose(r.takeaways.effects);
+      $("doe-take-anova").innerHTML = prose(r.takeaways.anova)
         .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
 
       drawContours(r);

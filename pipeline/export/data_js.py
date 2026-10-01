@@ -201,6 +201,23 @@ def _doe_payload(doe: DoeAnalysis) -> dict[str, Any]:
                 }
                 for t in ra.traces
             ],
+            # Every grade's slice, so no one grade stands for all of them.
+            "traces_by_grade": [
+                {
+                    "grade": grade,
+                    "traces": [
+                        {"factor": t.factor, "label": t.label,
+                         "x": _clean(t.x_values), "y": _clean(t.y_values)}
+                        for t in trs
+                    ],
+                }
+                for grade, trs in (ra.traces_by_grade or ((ra.trace_grade, ra.traces),))
+            ],
+            "trace_reference": dict(ra.traces[0].reference_point) if ra.traces else {},
+            "observed_range": _clean([
+                float(np.nanmin(ra.response.values[ra.response.available])),
+                float(np.nanmax(ra.response.values[ra.response.available])),
+            ]) if ra.response.available.any() else None,
             "interaction": {
                 "factor": ra.interactions[0].factor,
                 "label": ra.interactions[0].label,
