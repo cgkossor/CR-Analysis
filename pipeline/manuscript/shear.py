@@ -140,6 +140,8 @@ def answer(
     for label, xs in (("HPMC content", [p.hpmc_wt for p in pts]),
                       ("grade viscosity", [np.log10(p.viscosity_cp) for p in pts]),
                       ("API content", [p.api_wt for p in pts])):
+        if len(set(np.round(xs, 9))) < 2:
+            continue  # one grade only: no trend with viscosity to test
         res = stats.spearmanr(xs, idx)
         rho, p = float(res.statistic), float(res.pvalue)
         if not np.isfinite(rho):

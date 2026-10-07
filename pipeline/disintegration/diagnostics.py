@@ -105,10 +105,18 @@ def collect(r: DisintegrationAnalysis) -> Diagnostics:
           + (" — lower bounds, excluded from models" if len(cens) else ""))
     d.add(s, "fraction censored", "WARN" if n_pts and len(cens) / n_pts > 0.25 else "INFO",
           len(cens) / n_pts if n_pts else float("nan"))
-    lost = [g for g in r.grade_order
-            if not (r.matched[(r.matched["grade"] == g) & ~r.matched["dt_censored"]]).shape[0]]
+    # A grade with no disintegration rows was simply not tested; one whose
+    # tablets were all still intact was tested and lost to censoring. Only the
+    # second is a failure of the data that were supplied.
+    present = {g for g in r.grade_order if (r.matched["grade"] == g).any()}
+    absent = [g for g in r.grade_order if g not in present]
+    lost = [g for g in r.grade_order if g in present
+            and not (r.matched[(r.matched["grade"] == g) & ~r.matched["dt_censored"]]).shape[0]]
     d.add(s, "grades removed entirely by censoring", "FAIL" if lost else "PASS", len(lost),
           _names(lost))
+    d.add(s, "grades with no disintegration data", "WARN" if absent else "PASS", len(absent),
+          _names(absent) + (" — not tested; cross-grade results cover the other grades only"
+                            if absent else ""))
 
     # --- Plausibility -----------------------------------------------------
     s = "Plausibility"

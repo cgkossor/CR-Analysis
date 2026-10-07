@@ -69,7 +69,10 @@ def audit_disintegration(
         g: int(((r.matched["grade"] == g) & ~r.matched["dt_censored"]).sum())
         for g in r.grade_order
     }
-    add(SECTION, "grades_fully_censored", sum(1 for v in uncensored_by_grade.values() if v == 0))
+    tested = {g for g in r.grade_order if (r.matched["grade"] == g).any()}
+    add(SECTION, "grades_fully_censored",
+        sum(1 for g, v in uncensored_by_grade.items() if v == 0 and g in tested))
+    add(SECTION, "grades_without_dt_data", sum(1 for g in r.grade_order if g not in tested))
     add(SECTION, "grades_ge3_points", sum(1 for v in uncensored_by_grade.values() if v >= 3))
     add(SECTION, "reps_min", int(pts["n"].min()))
     add(SECTION, "reps_max", int(pts["n"].max()))
