@@ -119,8 +119,14 @@ def _downsample(rows: tuple[tuple[float | None, ...], ...], target: int) -> list
     ]
 
 
-def _doe_payload(doe: DoeAnalysis) -> dict[str, Any]:
+def _doe_payload(
+    doe: DoeAnalysis,
+    design_points: pd.DataFrame | None = None,
+    replicates: pd.DataFrame | None = None,
+) -> dict[str, Any]:
     """Serialise a classical DoE analysis for the dashboard."""
+    from pipeline.doe.measured import measured_points
+
     responses = []
     unavailable = []
     for ra in doe.responses:
@@ -139,7 +145,17 @@ def _doe_payload(doe: DoeAnalysis) -> dict[str, Any]:
             })
             continue
         table = ra.anova
+        measured = (measured_points(ra, design_points, replicates)
+                    if design_points is not None else [])
         responses.append({
+            # The formulations the model was fitted to, drawn beside every model
+            # line so a prediction is never read without the data under it.
+            "measured": [
+                {"case": m.case, "grade": m.grade, "api": _clean(m.api_wt),
+                 "hpmc": _clean(m.hpmc_wt), "lactose": _clean(m.lactose_wt),
+                 "y": _clean(m.mean), "sd": _clean(m.sd)}
+                for m in measured
+            ],
             "key": ra.response.spec.key,
             "label": ra.response.spec.label,
             "units": ra.response.spec.units,
@@ -683,7 +699,7 @@ def build_payload(
         "validation": validation,
         "equivalence": equivalence,
         "levers": _frame(a.lever_effects),
-        "doe": _doe_payload(a.doe),
+        "doe": _doe_payload(a.doe, a.design_points, a.replicates),
         "goals": goal_payload(),
     }
 
@@ -706,7 +722,7 @@ def build_payload(
         payload["disintegration"] = _disintegration_payload(disintegration)
         # Disintegration time gets the full DoE treatment in the DoE tab, listed
         # after the dissolution responses and marked with the study it came from.
-        extra = _doe_payload(disintegration.doe)
+        extra = _doe_payload(disintegration.doe, a.design_points, None)
         for resp in extra["responses"]:
             if resp["key"] in DT_DOE_KEYS:
                 resp["study"] = "disintegration"

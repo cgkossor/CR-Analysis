@@ -117,13 +117,41 @@
       host.appendChild(scale);
     }
 
+    /* Measured formulation means with +/-1 SD whiskers, drawn under the model
+     * lines. They sit at their own composition, so they scatter about a slice;
+     * a model line that leaves its grade's points is one to distrust. */
+    function drawMeasured(ch, pts, xKey, colour) {
+      pts.forEach(function (m) {
+        var x = ch.px(m[xKey]);
+        if (m.sd !== null && m.sd !== undefined && isFinite(m.sd) && m.sd > 0) {
+          ch.svg.appendChild(api.svgEl("line", {
+            x1: x, x2: x, y1: ch.py(m.y - m.sd), y2: ch.py(m.y + m.sd),
+            stroke: colour, "stroke-width": 1, opacity: 0.5
+          }));
+        }
+      });
+      ch.dots(pts.map(function (m) { return m[xKey]; }), pts.map(function (m) { return m.y; }),
+              colour, 3.2, pts.map(function (m) {
+                return "measured: case " + m.case + " / " + m.grade + " · " + fmt(m.y, 1) +
+                  (m.sd !== null && isFinite(m.sd) ? " ± " + fmt(m.sd, 1) : "");
+              }));
+    }
+
     function drawInteraction(r) {
       var ip = r.interaction;
       var ch = new Chart(560, 320);
-      var all = [];
+      var all = [], meas = r.measured || [];
       ip.series.forEach(function (s) { all = all.concat(s.y); });
-      ch.scales([ip.x[0], ip.x[ip.x.length - 1]], extent(all))
+      meas.forEach(function (m) {
+        all.push(m.y - (isFinite(m.sd) ? m.sd || 0 : 0), m.y + (isFinite(m.sd) ? m.sd || 0 : 0));
+      });
+      var xs = [ip.x[0], ip.x[ip.x.length - 1]].concat(meas.map(function (m) { return m[ip.factor]; }));
+      ch.scales(extent(xs, 0.03), extent(all))
         .axes(ip.factor.toUpperCase() + " (wt%)", r.label + " (" + r.units + ")");
+      ip.series.forEach(function (s, i) {
+        drawMeasured(ch, meas.filter(function (m) { return m.grade === s.grade; }),
+                     ip.factor, colourFor(s.grade, i));
+      });
       var series = [];
       ip.series.forEach(function (s, i) {
         ch.line(ip.x, s.y, colourFor(s.grade, i), { width: 2.2 });
@@ -136,22 +164,25 @@
       lg.innerHTML = ip.series.map(function (s, i) {
         return '<span><i style="background:' + colourFor(s.grade, i) + '"></i>' +
           esc(s.grade) + "</span>";
-      }).join("") + (ip.parallel
+      }).join("") +
+        "<span>lines: model prediction through the reference composition</span>" +
+        (meas.length ? "<span>dots: measured formulation means ± 1 SD, at their own " +
+          "composition</span>" : "") + (ip.parallel
         ? "<span>Lines are near parallel: the levers act independently.</span>"
         : "<span>Lines fan apart: the levers interact.</span>");
       $("doe-interaction").appendChild(lg);
     }
 
-    /* One panel per grade on a shared axis. A single grade's slice, autoscaled,
-     * once made a near-flat line at about 100% read as "everything releases
-     * fully" while measured curves elsewhere never reached 80%. The axis also
-     * takes in the measured range, so the slice is seen against the data. */
     /* Takeaways are written once for the Markdown reports, where **x** is
      * bold. Escape first, then turn only that markup into <b>. */
     function prose(text) {
       return esc(text || "").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
     }
 
+    /* One panel per grade on a shared axis. A single grade's slice, autoscaled,
+     * once made a near-flat line at about 100% read as "everything releases
+     * fully" while measured curves elsewhere never reached 80%. The axis also
+     * takes in the measured range, so the slice is seen against the data. */
     function drawTraces(r) {
       var host = $("doe-traces");
       host.innerHTML = "";
@@ -162,12 +193,20 @@
         p.traces.forEach(function (t) { all = all.concat(t.y); xs = xs.concat(t.x); });
       });
       if (r.observed_range) all = all.concat(r.observed_range);
+      var meas = r.measured || [];
+      function gradeRange(g) {
+        var v = meas.filter(function (m) { return m.grade === g; }).map(function (m) { return m.y; });
+        return v.length ? [Math.min.apply(null, v), Math.max.apply(null, v)] : null;
+      }
       var yd = extent(all), xd = extent(xs, 0.02);
       var row = el("div", { class: "trace-row" });
       panels.forEach(function (p) {
         var ch = new Chart(330, 280, { l: 52, r: 10, t: 22, b: 40 });
         ch.scales(xd, yd).axes("component (wt%)", r.label + " (" + r.units + ")");
-        if (r.observed_range) {
+        var gr = p.grade ? gradeRange(p.grade) : null;
+        if (gr) {
+          ch.rect(xd[0], gr[0], xd[1], gr[1], "#9aa3b2", 0.18);
+        } else if (r.observed_range) {
           ch.hline(r.observed_range[0], "#9aa3b2", "2 3");
           ch.hline(r.observed_range[1], "#9aa3b2", "2 3");
         }
@@ -193,14 +232,16 @@
         return '<span><i style="background:' + FALLBACK[i % FALLBACK.length] + '"></i>' +
           esc(t.label) + "</span>";
       }).join("") +
-        (r.observed_range ? '<span><i style="background:#9aa3b2"></i>measured range ' +
-          fmt(r.observed_range[0], 1) + " to " + fmt(r.observed_range[1], 1) + "</span>" : "");
+        (meas.length ? '<span><i style="background:#9aa3b2;opacity:.5"></i>shaded: measured ' +
+          "range at that grade</span>" : r.observed_range
+          ? '<span><i style="background:#9aa3b2"></i>measured range ' +
+            fmt(r.observed_range[0], 1) + " to " + fmt(r.observed_range[1], 1) + "</span>" : "");
       host.appendChild(lg);
       host.appendChild(el("p", { class: "hint" },
         "A model slice, not measured curves: each line varies one component from the " +
         "reference composition (API " + (ref.api || "?") + " / HPMC " + (ref.hpmc || "?") +
-        " / lactose " + (ref.lactose || "?") + " wt%), at that grade. Dotted lines mark " +
-        "the range actually measured across the design."));
+        " / lactose " + (ref.lactose || "?") + " wt%), at that grade. The shaded band " +
+        "is the range actually measured in that grade."));
     }
 
     function drawPareto(r) {

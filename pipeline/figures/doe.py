@@ -18,11 +18,14 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from matplotlib import ticker
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 
 from pipeline.doe.analysis import ResponseAnalysis
+from pipeline.doe.measured import MeasuredPoint, measured_points
 from pipeline.figures import publication as pub
 from pipeline.figures.publication import FigureRecord
 
@@ -108,30 +111,59 @@ def draw_pareto(ax: Axes, ra: ResponseAnalysis) -> None:
     ax.legend(loc="lower right")
 
 
-def draw_interaction(ax: Axes, ra: ResponseAnalysis) -> None:
-    """Non-parallel lines are the interaction, read straight off the picture."""
+def draw_interaction(
+    ax: Axes, ra: ResponseAnalysis, measured: Sequence[MeasuredPoint] | None = None
+) -> None:
+    """Model lines per grade, over the measured formulations they were fitted to.
+
+    Lines are predictions along one slice through the reference composition.
+    Points are measured formulation means (+/- 1 SD over replicates) at their
+    own composition, so they scatter about the slice; a line that runs away
+    from its grade's points is a model that does not describe the data.
+    """
     prof = ra.interactions[0]
-    n = len(prof.x_values)
+    factor = f"{prof.factor}_wt"
+    grades = [label for label, _ in prof.series]
+    for i, grade in enumerate(grades):
+        st = pub.grade_style(grade, i)
+        pts = [m for m in (measured or ()) if m.grade == grade]
+        if pts:
+            xs = [getattr(m, factor) for m in pts]
+            means = [m.mean for m in pts]
+            err = [m.sd if np.isfinite(m.sd) else 0.0 for m in pts]
+            ax.errorbar(xs, means, yerr=err, fmt=st.marker, color=st.colour, ms=3.2,
+                        alpha=0.55, elinewidth=0.6, capsize=1.5, zorder=2)
     for i, (label, ys) in enumerate(prof.series):
         st = pub.grade_style(label, i)
-        ax.plot(
-            prof.x_values, ys, **st.line(), markevery=max(1, n // 6),
-            markerfacecolor="white", markeredgewidth=0.8, label=label,
-        )
+        ax.plot(prof.x_values, ys, color=st.colour, linestyle=st.linestyle, lw=1.4,
+                label=label, zorder=3)
     ax.set_xlabel(f"{prof.factor.upper()} (wt%)")
     ax.set_ylabel(_response_label(ra))
     pub.auto_minor(ax)
-    ax.legend(title="Grade")
+    handles, labels = ax.get_legend_handles_labels()
+    if measured:
+        handles += [Line2D([], [], color=pub.INK, lw=1.4),
+                    Line2D([], [], color=pub.INK, marker="o", ls="none", ms=3.2, alpha=0.55)]
+        labels += ["model prediction", "measured mean ± SD"]
+    ax.legend(handles, labels, title="Grade", fontsize=6)
 
 
 def draw_traces(ax: Axes, traces: Sequence[Any], ra: ResponseAnalysis,
-                legend: bool = True) -> None:
+                legend: bool = True,
+                measured: Sequence[MeasuredPoint] | None = None) -> None:
     """Cox response traces: the mixture analogue of a main-effects plot.
 
     An open circle marks the reference formulation on each line, the one point
     all three traces share.
     """
     styles = ("-", "--", "-.", ":")
+    # The grade's measured range, behind the model slice. One composition axis
+    # cannot place every formulation for three components at once, so the
+    # band shows how far the data run at this grade instead.
+    if measured:
+        vals = [m.mean for m in measured]
+        ax.axhspan(min(vals), max(vals), color=pub.MUTED, alpha=0.15, lw=0, zorder=0,
+                   label="measured range, this grade")
     for i, tr in enumerate(traces):
         colour = pub.series_colour(i + 3)
         ax.plot(
@@ -147,7 +179,7 @@ def draw_traces(ax: Axes, traces: Sequence[Any], ra: ResponseAnalysis,
     ax.set_ylabel(_response_label(ra))
     pub.auto_minor(ax)
     if legend:
-        ax.legend()
+        ax.legend(title="Model prediction, varying", fontsize=6)
 
 
 def draw_half_normal(ax: Axes, ra: ResponseAnalysis) -> None:
@@ -238,13 +270,15 @@ def surface_3d(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
     return pub.save(fig, out, f"doe_surface3d_{ra.response.spec.key}", banner=banner)
 
 
-def traces(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
+def traces(ra: ResponseAnalysis, out: Path, banner: str | None,
+           measured: Sequence[MeasuredPoint] | None = None) -> str:
     """One panel per grade on a shared axis, so no grade's slice stands for all."""
     by_grade = ra.traces_by_grade or ((ra.trace_grade, ra.traces),)
     fig, axes = pub.new_figure(pub.DOUBLE, 2.5, ncols=len(by_grade), sharey=True)
     axes = list(np.atleast_1d(axes))
     for i, (ax, (grade, trs)) in enumerate(zip(axes, by_grade, strict=True)):
-        draw_traces(ax, trs, ra, legend=i == 0)
+        draw_traces(ax, trs, ra, legend=i == 0,
+                    measured=[m for m in (measured or ()) if m.grade == grade])
         pub.header_note(ax, grade)
         if i:
             ax.set_ylabel("")
@@ -278,9 +312,10 @@ def _trace_caption(ra: ResponseAnalysis) -> str:
     )
 
 
-def interaction(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
+def interaction(ra: ResponseAnalysis, out: Path, banner: str | None,
+                measured: Sequence[MeasuredPoint] | None = None) -> str:
     fig, ax = pub.new_figure(pub.SINGLE)
-    draw_interaction(ax, ra)
+    draw_interaction(ax, ra, measured)
     return pub.save(fig, out, f"doe_interaction_{ra.response.spec.key}", banner=banner)
 
 
@@ -311,7 +346,8 @@ def _significant_terms(ra: ResponseAnalysis) -> str:
 
 
 def render_doe_figures(
-    analyses: tuple[ResponseAnalysis, ...], out_dir: Path, banner: str | None
+    analyses: tuple[ResponseAnalysis, ...], out_dir: Path, banner: str | None,
+    design_points: pd.DataFrame | None = None, replicates: pd.DataFrame | None = None,
 ) -> list[FigureRecord]:
     """Render the DoE figure set."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -322,6 +358,8 @@ def render_doe_figures(
         if key not in FEATURED or not ra.usable:
             continue
         label = ra.response.spec.label
+        measured = (measured_points(ra, design_points, replicates)
+                    if design_points is not None else [])
         prof = ra.interactions[0] if ra.interactions else None
         fan = (
             "The lines are close to parallel, so the HPMC effect barely depends on grade."
@@ -332,9 +370,12 @@ def render_doe_figures(
         made += [
             FigureRecord(
                 f"DOE-interaction-{key}", "doe", 10,
-                f"{label} against HPMC content predicted by the fitted model, one line "
-                f"per grade. {fan}",
-                interaction(ra, out_dir, banner),
+                f"{label} against HPMC content. Lines: predicted by the fitted model "
+                "along a slice through the reference composition, one per grade. Points: "
+                "measured formulation means (±1 SD over replicates) at their own "
+                "composition, which differs from the slice in API and lactose, so they "
+                f"scatter about the lines. {fan}",
+                interaction(ra, out_dir, banner, measured),
             ),
             FigureRecord(
                 f"DOE-contour-{key}", "doe", 11,
@@ -347,7 +388,7 @@ def render_doe_figures(
             FigureRecord(
                 f"DOE-traces-{key}", "doe", 12,
                 _trace_caption(ra),
-                traces(ra, out_dir, banner),
+                traces(ra, out_dir, banner, measured),
             ),
             FigureRecord(
                 f"DOE-pareto-{key}", "doe", 13,

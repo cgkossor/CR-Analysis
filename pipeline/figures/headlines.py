@@ -76,11 +76,16 @@ def _h2(analysis: Analysis, out: Path, banner: str | None) -> FigureRecord | Non
     render.draw_lever(axes[0], analysis)
     caption = render.lever_caption(analysis)
     if ra is not None and ra.usable and ra.interactions:
-        doefig.draw_interaction(axes[1], ra)
+        from pipeline.doe.measured import measured_points
+
+        doefig.draw_interaction(
+            axes[1], ra, measured_points(ra, analysis.design_points, analysis.replicates)
+        )
         caption = (
-            f"(A) {caption} (B) Fitted {ra.response.spec.label.lower()} against HPMC "
-            "content, one line per grade; non-parallel lines are the HPMC × grade "
-            "interaction."
+            f"(A) {caption} (B) {ra.response.spec.label} against HPMC content: lines are "
+            "the fitted model along a slice through the reference composition, one per "
+            "grade; points are measured formulation means (±1 SD) at their own "
+            "composition. Non-parallel lines are the HPMC × grade interaction."
         )
     if len(axes) > 1:
         pub.label_panels(axes)

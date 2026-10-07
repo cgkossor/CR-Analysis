@@ -728,7 +728,8 @@ def render_all(analysis: Analysis, stress: StressTest, out_dir: Path) -> list[Fi
         ))
 
     # --- classical DoE ---------------------------------------------------
-    records += render_doe_figures(analysis.doe.responses, out_dir, banner)
+    records += render_doe_figures(analysis.doe.responses, out_dir, banner,
+                                  analysis.design_points, analysis.replicates)
 
     pub.write_captions(records, out_dir, "Figures")
     render_headlines(analysis, stress, out_dir / "headlines")
