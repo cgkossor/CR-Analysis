@@ -130,12 +130,39 @@ def reduce_model(
     if not full.estimable:
         return ReducedModel(spec, tuple(labels), (), full, "full model not estimable")
 
-    significant = {
-        c.name
-        for c in full.coefficients
-        if np.isfinite(c.p_value) and c.p_value < alpha
-    }
-    kept = enforce_hierarchy(significant, set(labels))
+    # Backward elimination, one term at a time. A single cut at p < alpha in
+    # the full fit loses real effects: with three grades the v and v^2 terms
+    # overlap, so each can look insignificant alone while together they carry
+    # a clear grade effect, and the whole grade dependence was dropped at once
+    # (every grade then predicted the same line). Removing only the weakest
+    # term that nothing else depends on, and refitting, lets the survivor
+    # show its real significance. Linear blending terms are never removed:
+    # in a Scheffe model they are the pure-component responses.
+    kept = set(labels)
+    current = full
+    while True:
+        protected = {t for t in labels if ":" not in t and "*" not in t}
+        for term in kept:
+            protected |= _parents(term)
+        removable = [
+            c for c in current.coefficients
+            if c.name not in protected and np.isfinite(c.p_value) and c.p_value >= alpha
+        ]
+        if not removable:
+            break
+        weakest = max(removable, key=lambda c: (c.p_value, c.name))
+        kept.discard(weakest.name)
+        idx = [i for i, name in enumerate(labels) if name in kept]
+        current = fit_surface(
+            full_matrix[:, idx], response, [labels[i] for i in idx],
+            response_name=response_name, model_label=spec.label,
+        )
+        if not current.estimable:
+            kept.add(weakest.name)
+            break
+    significant = {c.name for c in current.coefficients
+                   if np.isfinite(c.p_value) and c.p_value < alpha}
+    kept = enforce_hierarchy(kept, set(labels))
     if not kept:
         return ReducedModel(spec, tuple(labels), (), full, "no term reached significance")
 
