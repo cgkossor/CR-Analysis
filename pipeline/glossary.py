@@ -323,25 +323,51 @@ _PLOTS: tuple[Term, ...] = (
         "the tested region.",
     ),
     Term(
-        "interaction_plot", "interaction plot",
-        "A response against one component (HPMC or API), with one model line per grade. "
-        "The other components keep the reference composition's ratio.",
+        "ternary_plot", "ternary (triangle) plot",
+        "The standard picture of a three-component mixture. Each corner is one component "
+        "at its highest possible level with the other two at their lowest tested levels "
+        "(L-pseudocomponents); every blend is a point inside. One triangle per grade.",
         "",
-        "Parallel lines: the component's effect is the same in every grade. Lines that "
-        "fan apart: the effect depends on the grade (an interaction). Lines that "
-        "coincide: no grade term survived model reduction for that response.",
-        "the measured points sit at their own compositions, which differ from the slice "
-        "in API and lactose, so they scatter about the lines rather than on them.",
+        "Background colour is the fitted model; dots are the measured blends filled with "
+        "their measured value on the same scale. A dot that stands out from its "
+        "surroundings is a blend the model does not fit. Edge numbers give each "
+        "component's wt%: lactose on the left, API along the bottom, HPMC on the right.",
+        "blank area is outside the tested region and is not predicted.",
     ),
     Term(
-        "cox_trace", "Cox response trace",
-        "How a response changes as one component is varied from the reference "
-        "composition while the other two keep their ratio, one panel per grade.",
+        "predicted_actual", "predicted vs actual",
+        "Each formulation's measured value against the model's prediction for it, with "
+        "the 1:1 line.",
+        "",
+        "Points on the line are predicted exactly; the scatter about it is the model's "
+        "error. A grade whose points sit off the line is one the model describes badly.",
+        "predicted R2 below about 0.5 means the model should not be read as a prediction "
+        "for that response.",
+    ),
+    Term(
+        "piepel_trace", "Piepel response trace",
+        "The model's prediction as one component rises from the average tested blend, "
+        "the other two keeping their ratio above their lowest tested levels; one panel "
+        "per grade, drawn inside the tested region only.",
         "",
         "A steep trace is a component that moves the response; a flat one barely does. "
-        "It is the mixture-design version of a main-effects plot.",
-        "it is a model slice through one composition. A flat trace means that component "
-        "has little effect there, not that every formulation behaves that way.",
+        "It is the standard trace for a mixture whose components have lower limits.",
+        "it is a direction through one blend, not a picture of the measured data, so the "
+        "blends you made do not lie on it.",
+    ),
+    Term(
+        "interaction_plot", "interaction plot (not used)",
+        "A response against one component with one model line per grade.",
+        "",
+        "Not drawn here: in a three-component mixture no component can change alone, so "
+        "a one-component line passes through none of the measured blends. The ternary "
+        "plot shows the same information honestly.",
+    ),
+    Term(
+        "cox_trace", "Cox response trace (not used)",
+        "A trace like the Piepel trace, but along the Cox direction in real proportions.",
+        "",
+        "Replaced by the Piepel trace, which suits components with lower limits.",
     ),
     Term(
         "reference_composition", "reference composition",

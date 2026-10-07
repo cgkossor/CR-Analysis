@@ -58,7 +58,7 @@
 
     var notes = doe.method_notes || {};
     var noteMap = {
-      "m-contour": "contour", "m-interaction": "interaction", "m-cox": "cox_trace",
+      "m-contour": "contour",
       "m-pareto": "pareto", "m-halfnormal": "half_normal",
       "m-anova": "anova", "m-summary": "model_summary"
     };
@@ -74,36 +74,91 @@
       return doe.responses[0];
     }
 
-    function drawContours(r) {
+    /* Takeaways are written once for the Markdown reports, where **x** is
+     * bold. Escape first, then turn only that markup into <b>. */
+    function prose(text) {
+      return esc(text || "").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+    }
+
+    /* Ternary contours, one triangle per grade. The fitted model fills the
+     * tested region; each measured blend is a dot filled with its measured
+     * value on the same colour scale, so a dot that stands out from its
+     * surroundings is one the model does not fit. */
+    function drawTernary(r) {
       var host = $("doe-contour");
       host.innerHTML = "";
-      var lo = r.scale[0], hi = r.scale[1];
-      var span = (hi - lo) || 1;
-
-      r.grids.forEach(function (g) {
-        var ch = new Chart(340, 285, { l: 46, r: 12, t: 22, b: 40 });
-        var ax = g.api_axis, hx = g.hpmc_axis;
-        ch.scales([ax[0], ax[ax.length - 1]], [hx[0], hx[hx.length - 1]])
-          .axes("API (wt%)", "HPMC (wt%)");
-
-        var dw = (ax[1] - ax[0]) || 1, dh = (hx[1] - hx[0]) || 1;
-        for (var i = 0; i < g.z.length; i++) {
-          for (var j = 0; j < g.z[i].length; j++) {
-            var v = g.z[i][j];
-            if (v === null || !isFinite(v)) continue;   /* outside the tested hull */
-            ch.rect(ax[j], hx[i], ax[j] + dw, hx[i] + dh,
-                    rampColour((v - lo) / span), 1);
-          }
-        }
-        g.points.forEach(function (p) {
-          ch.dots([p[0]], [p[1]], "#ffffff", 3.4, [p[0].toFixed(1) + " / " + p[1].toFixed(1)]);
-        });
-        ch.mount(host.appendChild(el("div", { style: "display:inline-block" })));
-        var cap = el("div", { class: "legend" });
-        cap.innerHTML = "<b>" + esc(g.grade) + "</b> &middot; " +
-          Math.round(g.viscosity_cp).toLocaleString() + " cP";
-        host.lastChild.appendChild(cap);
+      var T = r.ternary;
+      if (!T) return;
+      var vals = [];
+      T.grades.forEach(function (g) {
+        g.value.forEach(function (v) { if (v !== null && isFinite(v)) vals.push(v); });
       });
+      T.points.forEach(function (p) { if (isFinite(p.value)) vals.push(p.value); });
+      var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+      var span = (hi - lo) || 1;
+      /* Wide side margins: the corner labels sit outside the triangle. */
+      var W = 340, padX = 62, s = W - 2 * padX, H = Math.round(s * 0.87) + 60;
+      function X(x) { return padX + x * s; }
+      function Y(y) { return H - 34 - y * s; }
+      var NS = "http://www.w3.org/2000/svg";
+      var row = el("div", { class: "trace-row" });
+
+      T.grades.forEach(function (g) {
+        var svg = document.createElementNS(NS, "svg");
+        svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+        svg.setAttribute("width", W); svg.setAttribute("height", H);
+        T.triangles.forEach(function (t) {
+          var v = (g.value[t[0]] + g.value[t[1]] + g.value[t[2]]) / 3;
+          if (!isFinite(v)) return;
+          var d = t.map(function (k, i) {
+            return (i ? "L" : "M") + X(T.xy[k][0]).toFixed(1) + " " + Y(T.xy[k][1]).toFixed(1);
+          }).join(" ") + "Z";
+          var path = api.svgEl("path", { d: d, fill: rampColour((v - lo) / span),
+                                         stroke: rampColour((v - lo) / span), "stroke-width": 0.5 });
+          svg.appendChild(path);
+        });
+        T.ticks.forEach(function (t) {
+          svg.appendChild(api.svgEl("line", {
+            x1: X(t.ends[0][0]), y1: Y(t.ends[0][1]), x2: X(t.ends[1][0]), y2: Y(t.ends[1][1]),
+            stroke: "#ffffff", "stroke-width": 0.5, opacity: 0.55
+          }));
+          var e = t.component === "hpmc" ? t.ends[1] : t.ends[0];
+          var cx = 0.5, cy = Math.sqrt(3) / 6, dx = e[0] - cx, dy = e[1] - cy;
+          var n = Math.sqrt(dx * dx + dy * dy) || 1;
+          var lab = api.svgEl("text", { x: X(e[0] + dx / n * 0.05), y: Y(e[1] + dy / n * 0.05) + 3,
+            "font-size": 8, "text-anchor": "middle", fill: "#5d6879" });
+          lab.textContent = trim(t.value);
+          svg.appendChild(lab);
+        });
+        var C = [[0, 0], [1, 0], [0.5, Math.sqrt(3) / 2]];
+        svg.appendChild(api.svgEl("path", {
+          d: "M" + C.map(function (c) { return X(c[0]) + " " + Y(c[1]); }).join("L") + "Z",
+          fill: "none", stroke: "#1c2330", "stroke-width": 1
+        }));
+        T.corners.forEach(function (c, i) {
+          var t = api.svgEl("text", {
+            x: X(C[i][0]) + (i === 0 ? -4 : i === 1 ? 4 : 0),
+            y: Y(C[i][1]) + (i === 2 ? -8 : 16),
+            "font-size": 10, "font-weight": 600, fill: "#1c2330",
+            "text-anchor": i === 0 ? "end" : i === 1 ? "start" : "middle"
+          });
+          t.textContent = c.label + " " + trim(c.max_wt) + "%";
+          svg.appendChild(t);
+        });
+        T.points.filter(function (p) { return p.grade === g.grade; }).forEach(function (p) {
+          var dot = api.svgEl("circle", { cx: X(p.x), cy: Y(p.y), r: 5,
+            fill: rampColour((p.value - lo) / span), stroke: "#1c2330", "stroke-width": 1 });
+          var tt = api.svgEl("title", {});
+          tt.textContent = "measured " + fmt(p.value, 1) + " " + r.units;
+          dot.appendChild(tt);
+          svg.appendChild(dot);
+        });
+        var cell = el("div", { class: "chart" });
+        cell.appendChild(el("div", { class: "panel-title" }, g.grade));
+        cell.appendChild(svg);
+        row.appendChild(cell);
+      });
+      host.appendChild(row);
 
       var scale = el("div", { class: "legend" });
       var swatches = "";
@@ -112,136 +167,95 @@
       }
       scale.innerHTML = "<span>" + fmt(lo, 1) + " " + swatches + " " + fmt(hi, 1) +
         " " + esc(r.units) + "</span>" +
-        "<span>White points are formulations actually run. Blank area is outside " +
-        "the tested region — no prediction is offered there.</span>";
+        "<span>Background: fitted model. Dots: measured blends, filled with their " +
+        "measured value. Corners: each component at its highest possible level, the " +
+        "others at their lowest tested. Blank: outside the tested region.</span>";
       host.appendChild(scale);
     }
 
-    /* Measured formulation means with +/-1 SD whiskers, drawn under the model
-     * lines. They sit at their own composition, so they scatter about a slice;
-     * a model line that leaves its grade's points is one to distrust. */
-    function drawMeasured(ch, pts, xKey, colour) {
-      pts.forEach(function (m) {
-        var x = ch.px(m[xKey]);
-        if (m.sd !== null && m.sd !== undefined && isFinite(m.sd) && m.sd > 0) {
-          ch.svg.appendChild(api.svgEl("line", {
-            x1: x, x2: x, y1: ch.py(m.y - m.sd), y2: ch.py(m.y + m.sd),
-            stroke: colour, "stroke-width": 1, opacity: 0.5
-          }));
-        }
-      });
-      ch.dots(pts.map(function (m) { return m[xKey]; }), pts.map(function (m) { return m.y; }),
-              colour, 3.2, pts.map(function (m) {
-                return "measured: case " + m.case + " / " + m.grade + " · " + fmt(m.y, 1) +
-                  (m.sd !== null && isFinite(m.sd) ? " ± " + fmt(m.sd, 1) : "");
-              }));
+    function trim(v) {
+      return Math.abs(v - Math.round(v)) < 1e-9 ? String(Math.round(v)) : String(Number(v.toPrecision(3)));
     }
 
-    function drawInteraction(r) {
-      var ip = r.interaction;
-      var ch = new Chart(560, 320);
-      var all = [], meas = r.measured || [];
-      ip.series.forEach(function (s) { all = all.concat(s.y); });
-      meas.forEach(function (m) {
-        all.push(m.y - (isFinite(m.sd) ? m.sd || 0 : 0), m.y + (isFinite(m.sd) ? m.sd || 0 : 0));
-      });
-      var xs = [ip.x[0], ip.x[ip.x.length - 1]].concat(meas.map(function (m) { return m[ip.factor]; }));
-      ch.scales(extent(xs, 0.03), extent(all))
-        .axes(ip.factor.toUpperCase() + " (wt%)", r.label + " (" + r.units + ")");
-      ip.series.forEach(function (s, i) {
-        drawMeasured(ch, meas.filter(function (m) { return m.grade === s.grade; }),
-                     ip.factor, colourFor(s.grade, i));
-      });
-      var series = [];
-      ip.series.forEach(function (s, i) {
-        ch.line(ip.x, s.y, colourFor(s.grade, i), { width: 2.2 });
-        series.push({ xs: ip.x, ys: s.y, colour: colourFor(s.grade, i),
-                      path: ch.lastPath, baseWidth: 2.2, baseOpacity: 1,
-                      label: s.grade });
-      });
-      ch.interactive(series).mount($("doe-interaction"));
-      var lg = el("div", { class: "legend" });
-      lg.innerHTML = ip.series.map(function (s, i) {
-        return '<span><i style="background:' + colourFor(s.grade, i) + '"></i>' +
-          esc(s.grade) + "</span>";
-      }).join("") +
-        "<span>lines: model prediction through the reference composition</span>" +
-        (meas.length ? "<span>dots: measured formulation means ± 1 SD, at their own " +
-          "composition</span>" : "") + (ip.parallel
-        ? "<span>Lines are near parallel: the levers act independently.</span>"
-        : "<span>Lines fan apart: the levers interact.</span>");
-      $("doe-interaction").appendChild(lg);
-    }
-
-    /* Takeaways are written once for the Markdown reports, where **x** is
-     * bold. Escape first, then turn only that markup into <b>. */
-    function prose(text) {
-      return esc(text || "").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-    }
-
-    /* One panel per grade on a shared axis. A single grade's slice, autoscaled,
-     * once made a near-flat line at about 100% read as "everything releases
-     * fully" while measured curves elsewhere never reached 80%. The axis also
-     * takes in the measured range, so the slice is seen against the data. */
-    function drawTraces(r) {
-      var host = $("doe-traces");
+    /* Predicted vs actual, by grade: the standard check of the model. */
+    function drawFit(r) {
+      var host = $("doe-fit");
       host.innerHTML = "";
-      var panels = r.traces_by_grade && r.traces_by_grade.length
-        ? r.traces_by_grade : [{ grade: "", traces: r.traces }];
-      var all = [], xs = [];
-      panels.forEach(function (p) {
-        p.traces.forEach(function (t) { all = all.concat(t.y); xs = xs.concat(t.x); });
+      if (!r.fit || !r.fit.pairs.length) return;
+      var P = r.fit.pairs;
+      var all = [];
+      P.forEach(function (p) { all.push(p.measured, p.predicted); });
+      var dom = extent(all, 0.05);
+      var ch = new Chart(420, 380, { l: 56, r: 16, t: 16, b: 44 });
+      ch.scales(dom, dom).axes("predicted " + r.label.toLowerCase(), "measured");
+      ch.line(dom, dom, "#5d6879", { dash: "5 4", width: 1 });
+      var grades = [];
+      P.forEach(function (p) { if (grades.indexOf(p.grade) < 0) grades.push(p.grade); });
+      var order = ["K100LV", "K4M", "K100M"];
+      grades.sort(function (a, b) {
+        var ia = order.indexOf(a), ib = order.indexOf(b);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || (a < b ? -1 : 1);
       });
-      if (r.observed_range) all = all.concat(r.observed_range);
-      var meas = r.measured || [];
-      function gradeRange(g) {
-        var v = meas.filter(function (m) { return m.grade === g; }).map(function (m) { return m.y; });
-        return v.length ? [Math.min.apply(null, v), Math.max.apply(null, v)] : null;
-      }
+      grades.forEach(function (g, i) {
+        var pts = P.filter(function (p) { return p.grade === g; });
+        ch.dots(pts.map(function (p) { return p.predicted; }),
+                pts.map(function (p) { return p.measured; }), colourFor(g, i), 4,
+                pts.map(function (p) {
+                  return "case " + p.case + " / " + g + ": measured " + fmt(p.measured, 1) +
+                    ", predicted " + fmt(p.predicted, 1);
+                }));
+      });
+      ch.mount(host);
+      var lg = el("div", { class: "legend" });
+      lg.innerHTML = grades.map(function (g, i) {
+        return '<span><i style="background:' + colourFor(g, i) + '"></i>' + esc(g) + "</span>";
+      }).join("") + "<span>dashed: 1:1, a perfect prediction</span>";
+      host.appendChild(lg);
+      $("doe-take-fit").innerHTML = "R² " + fmt(r.fit.r2, 2) + " describes how closely the " +
+        "model follows these points; predicted R² " + fmt(r.fit.pred_r2, 2) + " (leave-one-out) " +
+        "how well it would predict a formulation it has not seen. " +
+        (r.fit.pred_r2 !== null && r.fit.pred_r2 < 0.5
+          ? "<b>Below 0.5: do not read this response's contours or traces as predictions.</b>"
+          : "");
+    }
+
+    /* Piepel traces, per grade, inside the tested region only. Supporting
+     * view: which component moves the response, along one direction. */
+    function drawPiepel(r) {
+      var host = $("doe-piepel");
+      host.innerHTML = "";
+      if (!r.piepel || !r.piepel.length) return;
+      var all = [], xs = [];
+      r.piepel.forEach(function (p) {
+        p.traces.forEach(function (t) {
+          t.y.forEach(function (v, i) { if (v !== null && isFinite(v)) { all.push(v); xs.push(t.x[i]); } });
+        });
+      });
       var yd = extent(all), xd = extent(xs, 0.02);
+      var names = { api: "API", hpmc: "HPMC", lactose: "Lactose" };
       var row = el("div", { class: "trace-row" });
-      panels.forEach(function (p) {
-        var ch = new Chart(330, 280, { l: 52, r: 10, t: 22, b: 40 });
+      r.piepel.forEach(function (p) {
+        var ch = new Chart(330, 260, { l: 52, r: 10, t: 22, b: 40 });
         ch.scales(xd, yd).axes("component (wt%)", r.label + " (" + r.units + ")");
-        var gr = p.grade ? gradeRange(p.grade) : null;
-        if (gr) {
-          ch.rect(xd[0], gr[0], xd[1], gr[1], "#9aa3b2", 0.18);
-        } else if (r.observed_range) {
-          ch.hline(r.observed_range[0], "#9aa3b2", "2 3");
-          ch.hline(r.observed_range[1], "#9aa3b2", "2 3");
-        }
-        var series = [];
         p.traces.forEach(function (t, i) {
-          ch.line(t.x, t.y, FALLBACK[i % FALLBACK.length], { width: 2.2 });
-          series.push({ xs: t.x, ys: t.y, colour: FALLBACK[i % FALLBACK.length],
-                        path: ch.lastPath, baseWidth: 2.2, baseOpacity: 1,
-                        label: (p.grade ? p.grade + " · " : "") + t.label });
+          ch.line(t.x, t.y.map(function (v) { return v === null ? NaN : v; }),
+                  FALLBACK[i % FALLBACK.length], { width: 2 });
         });
         var title = api.svgEl("text", { x: 56, y: 14, "font-size": 12, "font-weight": 600,
                                         fill: "#1c2330" });
         title.textContent = p.grade;
         ch.svg.appendChild(title);
         var cell = el("div", { class: "chart" });
-        ch.interactive(series).mount(cell);
+        ch.mount(cell);
         row.appendChild(cell);
       });
       host.appendChild(row);
-      var ref = r.trace_reference || {};
       var lg = el("div", { class: "legend" });
-      lg.innerHTML = panels[0].traces.map(function (t, i) {
+      lg.innerHTML = r.piepel[0].traces.map(function (t, i) {
         return '<span><i style="background:' + FALLBACK[i % FALLBACK.length] + '"></i>' +
-          esc(t.label) + "</span>";
-      }).join("") +
-        (meas.length ? '<span><i style="background:#9aa3b2;opacity:.5"></i>shaded: measured ' +
-          "range at that grade</span>" : r.observed_range
-          ? '<span><i style="background:#9aa3b2"></i>measured range ' +
-            fmt(r.observed_range[0], 1) + " to " + fmt(r.observed_range[1], 1) + "</span>" : "");
+          names[t.component] + " rising</span>";
+      }).join("") + "<span>model prediction from the average tested blend; not measured data</span>";
       host.appendChild(lg);
-      host.appendChild(el("p", { class: "hint" },
-        "A model slice, not measured curves: each line varies one component from the " +
-        "reference composition (API " + (ref.api || "?") + " / HPMC " + (ref.hpmc || "?") +
-        " / lactose " + (ref.lactose || "?") + " wt%), at that grade. The shaded band " +
-        "is the range actually measured in that grade."));
     }
 
     function drawPareto(r) {
@@ -357,15 +371,13 @@
       });
 
       $("doe-take-contour").innerHTML = prose(r.takeaways.contour);
-      $("doe-take-interaction").innerHTML = prose(r.takeaways.interaction);
-      $("doe-take-traces").innerHTML = prose(r.takeaways.traces);
       $("doe-take-effects").innerHTML = prose(r.takeaways.effects);
       $("doe-take-anova").innerHTML = prose(r.takeaways.anova)
         .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
 
-      drawContours(r);
-      drawInteraction(r);
-      drawTraces(r);
+      drawTernary(r);
+      drawFit(r);
+      drawPiepel(r);
       drawPareto(r);
       drawHalfNormal(r);
       drawAnova(r);

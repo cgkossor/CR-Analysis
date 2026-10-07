@@ -24,8 +24,9 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
+from pipeline.doe import ternary, views
 from pipeline.doe.analysis import ResponseAnalysis
-from pipeline.doe.measured import MeasuredPoint, measured_points
+from pipeline.doe.measured import MeasuredPoint
 from pipeline.figures import publication as pub
 from pipeline.figures.publication import FigureRecord
 
@@ -332,10 +333,10 @@ def half_normal(ra: ResponseAnalysis, out: Path, banner: str | None) -> str:
     return pub.save(fig, out, f"doe_halfnormal_{ra.response.spec.key}", banner=banner)
 
 
-#: Which responses get the full figure set. Rendering all six for all nine
-#: responses would produce 54 figures, most never opened; these are the ones the
-#: storyline rests on.
-FEATURED: tuple[str, ...] = ("pct_12h", "t50", "pct_24h")
+#: Which responses get the figure set: t50 and every fixed-time % released.
+FEATURED: tuple[str, ...] = (
+    "t50", "pct_1h", "pct_2h", "pct_4h", "pct_8h", "pct_12h", "pct_24h",
+)
 
 
 def _significant_terms(ra: ResponseAnalysis) -> str:
@@ -345,71 +346,204 @@ def _significant_terms(ra: ResponseAnalysis) -> str:
     return f"Terms clearing the 5 % line: {', '.join(sig)}."
 
 
+def _levels(lo: float, hi: float) -> Any:
+    return (ticker.MaxNLocator(nbins=10).tick_values(lo, hi)
+            if np.isfinite(lo) and np.isfinite(hi) and hi > lo else 10)
+
+
+def _draw_triangle(ax: Axes, reg: ternary.Region) -> None:
+    """Outline, real-wt% grid lines and corner labels of the pseudocomponent triangle."""
+    c = ternary.CORNERS
+    ax.plot([*c[:, 0], c[0, 0]], [*c[:, 1], c[0, 1]], color=pub.INK, lw=0.8, zorder=4)
+    centre = c.mean(axis=0)
+    for t in ternary.ticks(reg):
+        (x0, y0), (x1, y1) = t.ends
+        ax.plot([x0, x1], [y0, y1], color="white", lw=0.35, alpha=0.6, zorder=3)
+        # One edge per component: lactose on the left, API along the bottom,
+        # HPMC on the right.
+        if t.component == "hpmc":
+            x0, y0 = x1, y1
+        # Value at the edge where the line leaves the triangle, pushed outward,
+        # in the component's own colour so the three families can be told apart.
+        out = np.array([x0, y0]) - centre
+        out = out / (np.linalg.norm(out) or 1.0) * 0.045
+        i = ternary.COMPONENTS.index(t.component)
+        ax.text(x0 + out[0], y0 + out[1], f"{t.value:g}",
+                ha="center", va="center", fontsize=5, color=pub.series_colour(i + 3))
+    for i, name in enumerate(ternary.COMPONENTS):
+        hi = (reg.lower[i] + reg.span) * 100.0
+        x, y = c[i]
+        ha = {0: "right", 1: "left", 2: "center"}[i]
+        dy = {0: -0.05, 1: -0.05, 2: 0.03}[i]
+        ax.text(x, y + dy, f"{ternary.LABELS[name]} {hi:.0f}%", ha=ha, va="center",
+                fontsize=6.5, color=pub.series_colour(i + 3))
+    ax.set_aspect("equal")
+    ax.set_xlim(-0.12, 1.12)
+    ax.set_ylim(-0.1, 0.95)
+    ax.axis("off")
+
+
+def draw_ternary(fig: Figure, axes: Sequence[Axes], ra: ResponseAnalysis,
+                 view: views.TernaryView) -> None:
+    """Ternary contours per grade; measured blends coloured on the same scale."""
+    import matplotlib.colors as mcolors
+    from matplotlib.tri import Triangulation
+
+    finite = [g.value[np.isfinite(g.value)] for g in view.grids]
+    measured = [v for *_, v in view.points]
+    every = np.concatenate([*finite, np.asarray(measured, dtype=float)])
+    lo, hi = (float(np.nanmin(every)), float(np.nanmax(every))) if every.size else (0, 1)
+    levels = _levels(lo, hi)
+    norm = mcolors.Normalize(lo, hi)
+    mesh = None
+    for ax, g in zip(axes, view.grids, strict=False):
+        if len(g.triangles):
+            tri = Triangulation(g.xy[:, 0], g.xy[:, 1], g.triangles)
+            z = np.where(np.isfinite(g.value), g.value, np.nanmean(g.value))
+            mesh = ax.tricontourf(tri, z, levels=levels, cmap="viridis", norm=norm)
+            ax.tricontour(tri, z, levels=levels, colors="white", linewidths=0.3, alpha=0.6)
+        _draw_triangle(ax, view.region)
+        pts = [(x, y, v) for x, y, grade, v in view.points if grade == g.grade]
+        if pts:
+            ax.scatter([q[0] for q in pts], [q[1] for q in pts], c=[q[2] for q in pts],
+                       cmap="viridis", norm=norm, s=22, edgecolor="black", linewidth=0.6,
+                       zorder=6)
+        pub.header_note(ax, g.grade)
+    if mesh is not None:
+        bar = fig.colorbar(mesh, ax=list(axes), shrink=0.85, pad=0.02, aspect=25)
+        bar.set_label(_response_label(ra))
+        bar.ax.tick_params(which="both", direction="in")
+
+
+def draw_pred_actual(ax: Axes, ra: ResponseAnalysis,
+                     pairs: Sequence[tuple[str, int, float, float]],
+                     order: Sequence[str] = ()) -> None:
+    """Measured against fitted, by grade, with the 1:1 line."""
+    present = set(g for g, *_ in pairs)
+    grades = [g for g in order if g in present] + sorted(present - set(order))
+    for i, grade in enumerate(grades):
+        st = pub.grade_style(grade, i)
+        pts = [(m, f) for g, _, m, f in pairs if g == grade]
+        ax.plot([f for _, f in pts], [m for m, _ in pts], ls="none", marker=st.marker,
+                color=st.colour, ms=4, label=grade)
+    vals = [v for *_, m, f in pairs for v in (m, f)]
+    if vals:
+        lo, hi = min(vals), max(vals)
+        pad = (hi - lo) * 0.05 or 1.0
+        ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], color=pub.INK, lw=0.7, ls="--")
+        ax.set_xlim(lo - pad, hi + pad)
+        ax.set_ylim(lo - pad, hi + pad)
+    ax.set_xlabel(f"Predicted {_response_label(ra)}")
+    ax.set_ylabel(f"Measured {_response_label(ra)}")
+    pub.corner_note(ax, f"R² = {ra.fit.r_squared:.2f}, predicted R² = "
+                        f"{ra.fit.pred_r_squared:.2f}", "upper left")
+    ax.set_aspect("equal", adjustable="box")
+    pub.auto_minor(ax)
+    ax.legend(loc="lower right", title="Grade", fontsize=6)
+
+
+def draw_piepel(axes: Sequence[Axes], ra: ResponseAnalysis,
+                traces_by_grade: dict[str, list[views.PiepelTrace]]) -> None:
+    """Piepel traces per grade, drawn only inside the tested region."""
+    styles = ("-", "--", "-.")
+    for k, (ax, (grade, trs)) in enumerate(zip(axes, traces_by_grade.items(), strict=False)):
+        for i, tr in enumerate(trs):
+            y = np.where(tr.inside, tr.y, np.nan)
+            ax.plot(tr.x_wt, y, color=pub.series_colour(i + 3), ls=styles[i],
+                    label=ternary.LABELS[tr.component])
+        pub.header_note(ax, grade)
+        ax.set_xlabel("Component (wt%)")
+        if k == 0:
+            ax.set_ylabel(_response_label(ra))
+            ax.legend(title="Model, varying", fontsize=6)
+        pub.auto_minor(ax)
+
+
+def ternary_figure(ra: ResponseAnalysis, design_points: pd.DataFrame, out: Path,
+                   banner: str | None) -> str:
+    view = views.ternary_view(ra, design_points)
+    fig, axes = pub.new_figure(pub.DOUBLE, 2.6, ncols=len(view.grids))
+    axes = list(np.atleast_1d(axes))
+    draw_ternary(fig, axes, ra, view)
+    pub.label_panels(axes)
+    return pub.save(fig, out, f"doe_ternary_{ra.response.spec.key}", banner=banner)
+
+
+def pred_actual_figure(ra: ResponseAnalysis, design_points: pd.DataFrame, out: Path,
+                       banner: str | None) -> str:
+    fig, ax = pub.new_figure(pub.SINGLE, 3.0)
+    draw_pred_actual(ax, ra, views.fitted_pairs(ra, design_points),
+                     [g for g, _ in views.grade_levels(design_points)])
+    return pub.save(fig, out, f"doe_predicted_actual_{ra.response.spec.key}", banner=banner)
+
+
+def piepel_figure(ra: ResponseAnalysis, design_points: pd.DataFrame, out: Path,
+                  banner: str | None) -> str:
+    traces_by_grade = views.piepel_traces(ra, design_points)
+    fig, axes = pub.new_figure(pub.DOUBLE, 2.4, ncols=len(traces_by_grade), sharey=True)
+    axes = list(np.atleast_1d(axes))
+    draw_piepel(axes, ra, traces_by_grade)
+    pub.label_panels(axes)
+    return pub.save(fig, out, f"doe_piepel_{ra.response.spec.key}", banner=banner)
+
+
 def render_doe_figures(
     analyses: tuple[ResponseAnalysis, ...], out_dir: Path, banner: str | None,
     design_points: pd.DataFrame | None = None, replicates: pd.DataFrame | None = None,
 ) -> list[FigureRecord]:
-    """Render the DoE figure set."""
+    """The standard mixture-DoE figure set for each featured response.
+
+    Ternary contours with the measured blends, predicted vs actual, and the
+    Pareto chart of effects; Piepel traces as a supporting (methods) view.
+    ``replicates`` is accepted for callers that pass it and is not needed here.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     made: list[FigureRecord] = []
-
+    if design_points is None:
+        return made
     for ra in analyses:
         key = ra.response.spec.key
         if key not in FEATURED or not ra.usable:
             continue
         label = ra.response.spec.label
-        measured = (measured_points(ra, design_points, replicates)
-                    if design_points is not None else [])
-        prof = ra.interactions[0] if ra.interactions else None
-        fan = (
-            "The lines are close to parallel, so the HPMC effect barely depends on grade."
-            if prof is not None and prof.parallel
-            else "The lines are not parallel: the HPMC effect depends on which grade "
-            "carries it."
-        )
         made += [
             FigureRecord(
-                f"DOE-interaction-{key}", "doe", 10,
-                f"{label} against HPMC content. Lines: predicted by the fitted model "
-                "along a slice through the reference composition, one per grade. Points: "
-                "measured formulation means (±1 SD over replicates) at their own "
-                "composition, which differs from the slice in API and lactose, so they "
-                f"scatter about the lines. {fan}",
-                interaction(ra, out_dir, banner, measured),
+                f"DOE-ternary-{key}", "doe", 10,
+                f"{label} across the tested blends, one triangle per grade. Each corner "
+                "is one component at its highest possible level with the other two at "
+                "their lowest tested levels (L-pseudocomponents); every blend is a point "
+                "inside, and the coloured numbers on each edge give that component's wt% "
+                "along the white grid lines. "
+                "Background: the fitted model, on one colour scale shared by all panels "
+                "and the points. Points: the measured blends, filled with their "
+                "measured value, so a point that stands out from its surroundings is "
+                "one the model does not fit. Blank: outside the tested region.",
+                ternary_figure(ra, design_points, out_dir, banner),
             ),
             FigureRecord(
-                f"DOE-contour-{key}", "doe", 11,
-                f"Fitted {label.lower()} across the tested composition region at each "
-                "grade (panels), on a shared colour scale. Open circles are the "
-                "formulations actually run; blank area lies outside the tested region "
-                "and is not predicted. Lactose is the balance to 100 wt%.",
-                contour_panel(ra, out_dir, banner),
+                f"DOE-predicted-actual-{key}", "doe", 11,
+                f"Measured against model-predicted {label.lower()} for every "
+                "formulation, by grade. Points on the dashed 1:1 line are predicted "
+                "exactly; the spread about it is the model's error. R² describes the "
+                "fit; predicted R² (leave-one-out) describes how well it predicts a "
+                "formulation it has not seen.",
+                pred_actual_figure(ra, design_points, out_dir, banner),
             ),
             FigureRecord(
-                f"DOE-traces-{key}", "doe", 12,
-                _trace_caption(ra),
-                traces(ra, out_dir, banner, measured),
-            ),
-            FigureRecord(
-                f"DOE-pareto-{key}", "doe", 13,
+                f"DOE-pareto-{key}", "doe", 12,
                 f"Standardised effects on {label.lower()}, against the 5 % (dashed) and "
                 f"Bonferroni (dotted) significance lines. {_significant_terms(ra)}",
                 pareto(ra, out_dir, banner),
             ),
             FigureRecord(
-                f"DOE-halfnormal-{key}", "doe", 14,
-                f"Half-normal plot for {label.lower()}. Inert terms lie on the dashed "
-                "line through the origin; real effects depart from it (the "
-                f"{HALF_NORMAL_LABELS} largest are named). Needs no error "
-                "estimate, so it is the more trustworthy read when residual degrees of "
-                "freedom are few.",
-                half_normal(ra, out_dir, banner),
-            ),
-            FigureRecord(
-                f"DOE-surface3d-{key}", "supplementary", 30,
-                f"The fitted {label.lower()} surface in relief for each grade, where "
-                "curvature and saddle regions are easier to see than in contour spacing.",
-                surface_3d(ra, out_dir, banner),
+                f"DOE-piepel-{key}", "methods", 40,
+                f"Piepel response traces for {label.lower()}, one panel per grade "
+                "(supporting view). Each line is the model's prediction as one component "
+                "rises from the reference blend (the average tested blend) along its "
+                "Piepel direction, the other two keeping their ratio above their lowest "
+                "tested levels. It shows which component moves the response most; it is "
+                "a direction through one blend, not a picture of the measured data.",
+                piepel_figure(ra, design_points, out_dir, banner),
             ),
         ]
     return made

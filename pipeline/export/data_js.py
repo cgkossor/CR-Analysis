@@ -102,21 +102,60 @@ def _replicate_sd(a: Analysis, case: int, grade: str) -> np.ndarray:
     return out
 
 
-#: Contour grids are downsampled for the browser. Full resolution is for the
-#: printed figures; the dashboard redraws on every interaction and a 60x60 grid
-#: per response per grade would dominate the payload for no visible gain.
-DASHBOARD_GRID = 26
+#: Steps along each edge of the dashboard's ternary grid. Coarser than the
+#: figures, which use 40, to keep data.js small; still finer than the eye needs.
+DASHBOARD_TERNARY_STEPS = 24
 
 
-def _downsample(rows: tuple[tuple[float | None, ...], ...], target: int) -> list[list[Any]]:
-    if not rows:
-        return []
-    step_r = max(len(rows) // target, 1)
-    step_c = max(len(rows[0]) // target, 1)
-    return [
-        [None if v is None else round(float(v), 2) for v in row[::step_c]]
-        for row in rows[::step_r]
-    ]
+def _mixture_views(ra: Any, design_points: pd.DataFrame) -> dict[str, Any]:
+    """Ternary, predicted-vs-actual and Piepel data for one response."""
+    from pipeline.doe import ternary, views
+
+    comp = views.design_comp(design_points)
+    reg = ternary.region(comp)
+    beta, keep = views.model_of(ra)
+    grids = ternary.grid(reg, comp, beta, keep, ra.spec, views.grade_levels(design_points),
+                         n=DASHBOARD_TERNARY_STEPS)
+    tv = views.ternary_view(ra, design_points)
+    pairs = views.fitted_pairs(ra, design_points)
+    piepel = views.piepel_traces(ra, design_points)
+    return {
+        "ternary": {
+            "corners": [
+                {"component": name, "label": ternary.LABELS[name],
+                 "max_wt": _clean((reg.lower[i] + reg.span) * 100.0)}
+                for i, name in enumerate(ternary.COMPONENTS)
+            ],
+            "ticks": [
+                {"component": t.component, "value": _clean(t.value),
+                 "ends": _clean([list(t.ends[0]), list(t.ends[1])])}
+                for t in ternary.ticks(reg)
+            ],
+            "xy": _clean(grids[0].xy) if grids else [],
+            "triangles": [[int(v) for v in tri] for tri in grids[0].triangles] if grids else [],
+            "grades": [{"grade": g.grade, "value": _clean(g.value)} for g in grids],
+            "points": [
+                {"x": _clean(x), "y": _clean(y), "grade": grade, "value": _clean(v)}
+                for x, y, grade, v in tv.points
+            ],
+        },
+        "fit": {
+            "pairs": [
+                {"grade": g, "case": c, "measured": _clean(m), "predicted": _clean(f)}
+                for g, c, m, f in pairs
+            ],
+            "r2": _clean(ra.fit.r_squared),
+            "pred_r2": _clean(ra.fit.pred_r_squared),
+        },
+        "piepel": [
+            {"grade": grade, "traces": [
+                {"component": t.component, "x": _clean(t.x_wt),
+                 "y": _clean(np.where(t.inside, t.y, np.nan))}
+                for t in trs
+            ]}
+            for grade, trs in piepel.items()
+        ],
+    }
 
 
 def _doe_payload(
@@ -210,60 +249,14 @@ def _doe_payload(
                 "bonferroni": _clean(ra.ranking.bonferroni_t),
                 "note": ra.ranking.note,
             },
-            "traces": [
-                {
-                    "factor": t.factor, "label": t.label,
-                    "x": _clean(t.x_values), "y": _clean(t.y_values),
-                }
-                for t in ra.traces
-            ],
-            # Every grade's slice, so no one grade stands for all of them.
-            "traces_by_grade": [
-                {
-                    "grade": grade,
-                    "traces": [
-                        {"factor": t.factor, "label": t.label,
-                         "x": _clean(t.x_values), "y": _clean(t.y_values)}
-                        for t in trs
-                    ],
-                }
-                for grade, trs in (ra.traces_by_grade or ((ra.trace_grade, ra.traces),))
-            ],
-            "trace_reference": dict(ra.traces[0].reference_point) if ra.traces else {},
-            "observed_range": _clean([
-                float(np.nanmin(ra.response.values[ra.response.available])),
-                float(np.nanmax(ra.response.values[ra.response.available])),
-            ]) if ra.response.available.any() else None,
-            "interaction": {
-                "factor": ra.interactions[0].factor,
-                "label": ra.interactions[0].label,
-                "x": _clean(ra.interactions[0].x_values),
-                "series": [
-                    {"grade": g, "y": _clean(ys)} for g, ys in ra.interactions[0].series
-                ],
-                "parallel": ra.interactions[0].parallel,
-                "divergence": _clean(ra.interactions[0].divergence),
-            },
-            "grids": [
-                {
-                    "grade": g.grade,
-                    "viscosity_cp": _clean(g.viscosity_cp),
-                    "api_axis": _clean(list(g.api_axis)[::max(len(g.api_axis)//DASHBOARD_GRID,1)]),
-                    "hpmc_axis": _clean(
-                        list(g.hpmc_axis)[::max(len(g.hpmc_axis)//DASHBOARD_GRID,1)]
-                    ),
-                    "z": _downsample(g.z, DASHBOARD_GRID),
-                    "points": _clean([[p[0], p[1]] for p in g.design_points]),
-                }
-                for g in ra.grids
-            ],
+            # The standard mixture views: ternary contours with the measured
+            # blends, predicted vs actual, and Piepel traces (methods).
+            **(_mixture_views(ra, design_points) if design_points is not None else {}),
             "scale": _clean(list(ra.scale)),
             "takeaways": {
                 "anova": ra.takeaway_anova,
                 "effects": ra.takeaway_effects,
-                "traces": ra.takeaway_traces,
                 "contour": ra.takeaway_contour,
-                "interaction": ra.interactions[0].interpretation,
             },
             "notes": list(ra.notes),
         })

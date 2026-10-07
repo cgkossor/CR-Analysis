@@ -434,7 +434,8 @@ def test_manuscript_questions_answer_with_evidence(rendered: dict) -> None:
 def test_glossary_lists_and_finds_terms(rendered: dict) -> None:
     """Every term is browsable, and the plot vocabulary is in it."""
     data = (DASHBOARD / "data.js").read_text(encoding="utf-8")
-    for key in ("cox_trace", "interaction_plot", "model_prediction", "shear_index",
+    for key in ("ternary_plot", "predicted_actual", "piepel_trace", "model_prediction",
+                "shear_index",
                 "worst_miss", "weibull_td", "f2"):
         assert f'"{key}": {{' in data, f"glossary is missing {key}"
     assert rendered["tabs"]["glossary"]["chars"] > 5000

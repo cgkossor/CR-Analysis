@@ -935,6 +935,10 @@ def _doe(r: AuditReport, a: Analysis) -> None:
         r.add("L", f"{k}_interactions", len(fitted.interactions))
         r.add("L", f"{k}_stats_finite", bool(np.isfinite(fitted.fit.r_squared)))
         r.add("L", f"{k}_trace_grades_flat", _flat_trace_grades(fitted))
+        # Whether the model predicts this response well enough to read its ternary
+        # plot as a prediction: leave-one-out R2 of at least 0.5.
+        r.add("L", f"{k}_pred_r2_ge_0p5",
+              bool(np.isfinite(fitted.fit.pred_r_squared) and fitted.fit.pred_r_squared >= 0.5))
 
 
 #: A grade's Cox traces are "flat" when, together, they span less than this

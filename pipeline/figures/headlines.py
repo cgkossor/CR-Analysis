@@ -70,22 +70,24 @@ def _h1(analysis: Analysis, out: Path, banner: str | None) -> FigureRecord:
 
 
 def _h2(analysis: Analysis, out: Path, banner: str | None) -> FigureRecord | None:
+    """The composition lever, beside how well the headline model fits the data."""
     ra = analysis.doe.by_key(HEADLINE_RESPONSE)
-    fig, axes = pub.new_figure(pub.ONEHALF, 2.5, ncols=2 if ra and ra.usable else 1)
+    usable = ra is not None and ra.usable
+    fig, axes = pub.new_figure(pub.ONEHALF, 2.6, ncols=2 if usable else 1)
     axes = list(np.atleast_1d(axes))
     render.draw_lever(axes[0], analysis)
     caption = render.lever_caption(analysis)
-    if ra is not None and ra.usable and ra.interactions:
-        from pipeline.doe.measured import measured_points
+    if usable and ra is not None:
+        from pipeline.doe import views
 
-        doefig.draw_interaction(
-            axes[1], ra, measured_points(ra, analysis.design_points, analysis.replicates)
+        doefig.draw_pred_actual(
+            axes[1], ra, views.fitted_pairs(ra, analysis.design_points),
+            [g for g, _ in views.grade_levels(analysis.design_points)],
         )
         caption = (
-            f"(A) {caption} (B) {ra.response.spec.label} against HPMC content: lines are "
-            "the fitted model along a slice through the reference composition, one per "
-            "grade; points are measured formulation means (±1 SD) at their own "
-            "composition. Non-parallel lines are the HPMC × grade interaction."
+            f"(A) {caption} (B) Measured against model-predicted "
+            f"{ra.response.spec.label.lower()} for every formulation; the dashed line is "
+            "1:1, so the scatter about it is the model's error."
         )
     if len(axes) > 1:
         pub.label_panels(axes)
@@ -97,13 +99,16 @@ def _h3(analysis: Analysis, out: Path, banner: str | None) -> FigureRecord | Non
     ra = analysis.doe.by_key(HEADLINE_RESPONSE)
     if ra is None or not ra.usable:
         return None
+    from pipeline.doe import views
+
     pub.apply_style()
+    view = views.ternary_view(ra, analysis.design_points)
     n_terms = len(ra.ranking.effects)
-    fig = plt.figure(figsize=(pub.DOUBLE, 2.5 + max(1.8, 0.11 * n_terms + 0.5)),
-                         layout="constrained")
-    top, bottom = fig.subfigures(2, 1, height_ratios=[2.5, max(1.8, 0.11 * n_terms + 0.5)])
-    caxes = list(np.atleast_1d(top.subplots(1, len(ra.grids), sharey=True)))
-    doefig.draw_contours(top, caxes, ra)
+    fig = plt.figure(figsize=(pub.DOUBLE, 2.6 + max(1.8, 0.11 * n_terms + 0.5)),
+                     layout="constrained")
+    top, bottom = fig.subfigures(2, 1, height_ratios=[2.6, max(1.8, 0.11 * n_terms + 0.5)])
+    caxes = list(np.atleast_1d(top.subplots(1, len(view.grids))))
+    doefig.draw_ternary(top, caxes, ra, view)
     pax = bottom.subplots(1, 1)
     doefig.draw_pareto(pax, ra)
     pub.label_panels([*caxes, pax])
@@ -113,8 +118,9 @@ def _h3(analysis: Analysis, out: Path, banner: str | None) -> FigureRecord | Non
     letters = "".join(chr(ord("A") + i) for i in range(len(caxes)))
     return FigureRecord(
         "H3", "headline", 3,
-        f"({letters[0]}–{letters[-1]}) Fitted {label} over the tested composition region "
-        "for each grade, on one colour scale; open circles are the formulations run. "
+        f"({letters[0]}–{letters[-1]}) {label.capitalize()} across the tested blends, one "
+        "triangle per grade: background is the fitted model, points are the measured "
+        "blends filled with their measured value on the same colour scale. "
         f"({chr(ord('A') + len(caxes))}) Standardised effects on {label} against the 5 % "
         f"(dashed) and Bonferroni (dotted) lines. {sig_text}",
         pub.save(fig, out, HEADLINES[2], banner=banner),
