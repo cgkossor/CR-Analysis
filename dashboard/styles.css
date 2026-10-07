@@ -210,3 +210,15 @@ ul.caveats { color: var(--muted); font-size: 12.5px; }
 .api-one { font-size: 12.5px; color: var(--muted); }
 .trace-row { display: flex; flex-wrap: wrap; gap: 10px; }
 .trace-row .chart { flex: 1 1 300px; }
+
+/* ---------------------------------------------------------- glossary */
+dl.glossary { margin: 0 0 8px; }
+dl.glossary dt { font-weight: 600; margin-top: 12px; }
+dl.glossary dt .gl-units { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 8px; }
+dl.glossary dd { margin: 2px 0 0 0; max-width: 90ch; }
+dl.glossary dd p { margin: 2px 0; font-size: 13px; }
+dl.glossary .gl-read { color: var(--ink); }
+dl.glossary .gl-careful { color: var(--warn); }
+dl.glossary dt.gl-hit { background: #fff3cd; }
+abbr.tip[data-term]:not([data-term=""]) { cursor: help; }
+#gl-search { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; width: 260px; }

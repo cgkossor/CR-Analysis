@@ -109,6 +109,7 @@ EXPECTED_TABS = {
     "q3",
     "q4",
     "q5",
+    "glossary",
 }
 
 #: Questions that need disintegration data, and hide without it.
@@ -116,9 +117,9 @@ DISINTEGRATION_QUESTIONS = {"q3", "q4"}
 
 #: The top-row tabs of each mode, in order.
 EXPECTED_MODES = {
-    "formulator": ["target", "predict", "substitute", "newapi", "data"],
+    "formulator": ["target", "predict", "substitute", "newapi", "data", "glossary"],
     "manuscripts": ["storyline", "questions", "figures", "doe", "disintegration", "qa",
-                    "data"],
+                    "data", "glossary"],
 }
 
 
@@ -428,3 +429,12 @@ def test_manuscript_questions_answer_with_evidence(rendered: dict) -> None:
     for name in ("storyline", "q1", "q2"):
         assert rendered["tabs"][name]["chars"] > 400
     assert ms["storyline"]["claims"], "the storyline lists no claims"
+
+
+def test_glossary_lists_and_finds_terms(rendered: dict) -> None:
+    """Every term is browsable, and the plot vocabulary is in it."""
+    data = (DASHBOARD / "data.js").read_text(encoding="utf-8")
+    for key in ("cox_trace", "interaction_plot", "model_prediction", "shear_index",
+                "worst_miss", "weibull_td", "f2"):
+        assert f'"{key}": {{' in data, f"glossary is missing {key}"
+    assert rendered["tabs"]["glossary"]["chars"] > 5000

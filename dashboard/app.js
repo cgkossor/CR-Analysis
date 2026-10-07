@@ -417,7 +417,8 @@
       { key: "predict", label: "Predict a Formulation", panels: ["predict"] },
       { key: "substitute", label: "Substitute / Grade Swap", panels: ["equivalence"] },
       { key: "newapi", label: "New-API Run Plan", panels: ["stress"] },
-      { key: "data", label: "Data", panels: ["explorer"] }
+      { key: "data", label: "Data", panels: ["explorer"] },
+      { key: "glossary", label: "Glossary", panels: ["glossary"] }
     ],
     manuscripts: [
       { key: "storyline", label: "Storyline", panels: ["storyline"] },
@@ -427,7 +428,8 @@
       { key: "doe", label: "DoE Deep-Dive", panels: ["doe", "surfaces", "metrics", "design"] },
       { key: "disintegration", label: "Disintegration", panels: ["disintegration"] },
       { key: "qa", label: "Methods & QA", panels: ["diagnostics", "guidelines", "admin"] },
-      { key: "data", label: "Data", panels: ["explorer"] }
+      { key: "data", label: "Data", panels: ["explorer"] },
+      { key: "glossary", label: "Glossary", panels: ["glossary"] }
     ]
   };
   var PANEL_LABELS = {
@@ -444,6 +446,7 @@
     if (name === "disintegration") return !!D.disintegration;
     if (name === "figures") return !!(D.figures && D.figures.length);
     if (name === "storyline") return !!D.manuscript;
+    if (name === "glossary") return !!(D.glossary && Object.keys(D.glossary).length);
     if (/^q\d$/.test(name)) {
       return !!(window.CRManuscript && window.CRManuscript.available(D, name));
     }
@@ -1343,7 +1346,14 @@
     "Td (h)": "weibull_td", "β": "weibull_beta", "F∞ %": "weibull_f_inf",
     "t50 (h)": "t50", "MDT (h)": "mdt", "censoring": "censored",
     "SD log₁₀Td (replicate)": "replicate_sd",
-    "lack-of-fit estimable": "lack_of_fit", "desirability": "desirability"
+    "lack-of-fit estimable": "lack_of_fit", "desirability": "desirability",
+    "worst miss (× band)": "worst_miss", "shear sensitivity (proxy)": "shear_index",
+    "shear index": "shear_index", "Q²": "q2", "status": "claim_status",
+    "ρ with HPMC wt%": "spearman_rho", "ρ with API wt%": "spearman_rho",
+    "drug load": "drug_load_third", "MDT": "mdt", "log Td": "log10_td",
+    "% at 24 h": "pct_at", "% at 12 h": "pct_at", "% at 8 h": "pct_at",
+    "% at 4 h": "pct_at", "% at 2 h": "pct_at", "Weibull β": "weibull_beta",
+    "DT (h)": "dt"
   };
 
   function tipFor(label) {
@@ -1360,10 +1370,74 @@
     return entry ? entry.tooltip : null;
   }
 
+  function keyFor(label) {
+    var key = TIP_ALIASES[label] || label;
+    if (GLOSSARY[key]) return key;
+    var lower = String(label).toLowerCase(), found = null;
+    Object.keys(GLOSSARY).forEach(function (k) {
+      if (!found && GLOSSARY[k].label && GLOSSARY[k].label.toLowerCase() === lower) found = k;
+    });
+    return found;
+  }
+
   function withTip(label) {
     var tip = tipFor(label);
     if (!tip) return esc(label);
-    return '<abbr class="tip" title="' + esc(tip) + '">' + esc(label) + "</abbr>";
+    return '<abbr class="tip" data-term="' + esc(keyFor(label) || "") + '" title="' +
+      esc(tip) + '">' + esc(label) + "</abbr>";
+  }
+
+  /* ------------------------------------------------------- glossary */
+  /* The same definitions the tooltips show, laid out to browse and search.
+   * Grouped by topic in the order the pipeline lists them. */
+  function renderGlossary(filter) {
+    var host = $("gl-list");
+    if (!host) return;
+    host.innerHTML = "";
+    var q = String(filter || "").trim().toLowerCase();
+    var groups = [], byGroup = {}, shown = 0;
+    Object.keys(GLOSSARY).forEach(function (k) {
+      var t = GLOSSARY[k], g = t.group || "Other";
+      var text = [t.label, t.definition, t.units, t.how_to_read, t.caveat, k].join(" ")
+        .toLowerCase();
+      if (q && text.indexOf(q) < 0) return;
+      if (!byGroup[g]) { byGroup[g] = []; groups.push(g); }
+      byGroup[g].push({ key: k, t: t });
+    });
+    groups.forEach(function (g) {
+      host.appendChild(el("h3", null, g));
+      var dl = el("dl", { class: "glossary" });
+      byGroup[g].sort(function (a, b) {
+        return a.t.label.toLowerCase() < b.t.label.toLowerCase() ? -1 : 1;
+      }).forEach(function (e) {
+        var dt = el("dt", { id: "gl-" + e.key }, e.t.label);
+        if (e.t.units) dt.appendChild(el("span", { class: "gl-units" }, e.t.units));
+        dl.appendChild(dt);
+        var dd = el("dd");
+        dd.appendChild(el("p", null, e.t.definition));
+        if (e.t.how_to_read) dd.appendChild(el("p", { class: "gl-read" }, e.t.how_to_read));
+        if (e.t.caveat) dd.appendChild(el("p", { class: "gl-careful" }, "Careful: " + e.t.caveat));
+        dl.appendChild(dd);
+        shown += 1;
+      });
+      host.appendChild(dl);
+    });
+    $("gl-count").textContent = shown + " of " + Object.keys(GLOSSARY).length + " terms";
+    if (!shown) host.appendChild(el("p", { class: "hint" }, "No term matches."));
+  }
+
+  /* Clicking an underlined term anywhere opens its glossary entry. */
+  function openGlossary(key) {
+    var search = $("gl-search");
+    if (search) search.value = "";
+    renderGlossary("");
+    showTab("glossary");
+    var target = document.getElementById("gl-" + key);
+    if (target) {
+      if (target.scrollIntoView) target.scrollIntoView({ block: "center" });
+      target.classList.add("gl-hit");
+      setTimeout(function () { target.classList.remove("gl-hit"); }, 2200);
+    }
   }
 
   /* ------------------------------------------------------ API selector */
@@ -1488,6 +1562,16 @@
     track("equivalence", renderEquivalence);
     track("stress", renderStress);
     track("predict", renderForward);
+    track("glossary", function () {
+      renderGlossary("");
+      $("gl-search").addEventListener("input", function () {
+        renderGlossary($("gl-search").value);
+      });
+      document.addEventListener("click", function (e) {
+        var t = e.target && e.target.closest ? e.target.closest("abbr.tip[data-term]") : null;
+        if (t && t.getAttribute("data-term")) openGlossary(t.getAttribute("data-term"));
+      });
+    });
     track("guidelines", renderGuidelines);
     track("diagnostics", renderDiagnostics);
 

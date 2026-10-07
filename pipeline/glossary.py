@@ -269,6 +269,299 @@ _STATISTICS: tuple[Term, ...] = (
 )
 
 
+# --- More release metrics -----------------------------------------------------
+_MORE_METRICS: tuple[Term, ...] = (
+    Term(
+        "pct_at", "% released at 1, 2, 4, 8, 12, 24 h",
+        "Percent of the dose released at that time, read off the measured curve by "
+        "linear interpolation between readings.",
+        "% of dose",
+        "These are the quantities dissolution specifications are written against. Later "
+        "times describe completeness; early times describe burst.",
+        "values above 100% are measurement offsets (assay, dose denominator), not more "
+        "drug than the tablet held. A run that stopped before the time has no value; it "
+        "is never extrapolated.",
+    ),
+    Term(
+        "log10_td", "log Td",
+        "Base-10 logarithm of the Weibull time scale Td.",
+        "log10(hours)",
+        "One unit is a factor of 10 in release time; 0.3 is a factor of 2. Modelled on "
+        "the log scale because release times multiply rather than add.",
+    ),
+    Term(
+        "early_slope", "early slope",
+        "Least-squares release rate over the early window of the curve.",
+        "% per hour",
+        "The initial (burst plus early diffusion) release rate.",
+    ),
+    Term(
+        "late_slope", "late slope",
+        "Least-squares release rate over the late window of the curve.",
+        "% per hour",
+        "How fast release continues once the gel layer has formed.",
+    ),
+    Term(
+        "slope_ratio", "slope ratio",
+        "Late slope divided by early slope.",
+        "ratio",
+        "Near 1 is close to constant-rate (zero-order) release; well below 1 is release "
+        "that slows down over time.",
+    ),
+)
+
+# --- Plots --------------------------------------------------------------------
+_PLOTS: tuple[Term, ...] = (
+    Term(
+        "model_prediction", "model prediction vs measured",
+        "Lines on the DoE plots are what the fitted model predicts; points and shaded "
+        "bands are the measured formulations.",
+        "",
+        "Trust a model line where it runs through its grade's measured points. Where it "
+        "leaves them, the model does not describe that region.",
+        "a model line can look precise where no formulation was run. Read it only inside "
+        "the tested region.",
+    ),
+    Term(
+        "interaction_plot", "interaction plot",
+        "A response against one component (HPMC or API), with one model line per grade. "
+        "The other components keep the reference composition's ratio.",
+        "",
+        "Parallel lines: the component's effect is the same in every grade. Lines that "
+        "fan apart: the effect depends on the grade (an interaction). Lines that "
+        "coincide: no grade term survived model reduction for that response.",
+        "the measured points sit at their own compositions, which differ from the slice "
+        "in API and lactose, so they scatter about the lines rather than on them.",
+    ),
+    Term(
+        "cox_trace", "Cox response trace",
+        "How a response changes as one component is varied from the reference "
+        "composition while the other two keep their ratio, one panel per grade.",
+        "",
+        "A steep trace is a component that moves the response; a flat one barely does. "
+        "It is the mixture-design version of a main-effects plot.",
+        "it is a model slice through one composition. A flat trace means that component "
+        "has little effect there, not that every formulation behaves that way.",
+    ),
+    Term(
+        "reference_composition", "reference composition",
+        "The single API / HPMC / lactose blend that traces and interaction plots start "
+        "from, normally the centroid (average) of the tested compositions.",
+        "wt%",
+        "Every trace passes through it (open circle on the trace plots).",
+    ),
+    Term(
+        "contour_plot", "contour plot",
+        "The fitted response across the tested composition region, one panel per grade, "
+        "API wt% against HPMC wt% with lactose as the balance.",
+        "",
+        "Bands of colour are levels of the response. Open circles are the formulations "
+        "actually run; blank area is outside the tested region and is not predicted.",
+    ),
+    Term(
+        "pareto_plot", "Pareto plot of effects",
+        "Each model term's |standardised effect|, largest first, with the 5% "
+        "significance line and the stricter Bonferroni line.",
+        "|t|",
+        "Bars past the line are terms the data support. Bars past the Bonferroni line "
+        "survive having tested every term at once.",
+    ),
+    Term(
+        "half_normal", "half-normal plot",
+        "Each term's |standardised effect| against where it would fall if every term "
+        "were pure noise.",
+        "",
+        "Inert terms lie on a straight line through the origin; real effects leave it, "
+        "upward and to the right.",
+    ),
+    Term(
+        "standardised_effect", "standardised effect |t|",
+        "A coefficient divided by its standard error.",
+        "dimensionless",
+        "Above about 2 is distinguishable from noise at the 5% level.",
+    ),
+    Term(
+        "error_bars", "error bars / SD band",
+        "Plus or minus one standard deviation across the replicate vessels of one "
+        "formulation.",
+        "% of dose",
+        "Within-batch repeatability. On probe-logged curves the bars are drawn at the "
+        "nominal sampling times only, so they stay readable.",
+        "replicates come from one compression batch, so this is smaller than the "
+        "batch-to-batch or model prediction error.",
+    ),
+    Term(
+        "headline_example", "example curves in headline figures",
+        "Curves chosen to illustrate a result in the headline (H) figures.",
+        "",
+        "Chosen automatically from the analysis results.",
+        f"a formulation whose mean peaks above {config.SHOWCASE_MAX_PEAK_PCT:g}% is never "
+        "used as an example, but it stays in every analysis.",
+    ),
+)
+
+# --- Models and methods -------------------------------------------------------
+_METHODS: tuple[Term, ...] = (
+    Term(
+        "scheffe", "Scheffe mixture model",
+        "A regression model for blends whose components sum to 100%, with no intercept. "
+        "Terms are the components (api, hpmc, lactose), their blends (api*hpmc) and "
+        "their crosses with grade (hpmc:v).",
+        "",
+        "A linear term's coefficient is the predicted response of the pure component; "
+        "a blend term (api*hpmc) is how far the mixture departs from straight-line "
+        "blending.",
+        "pure components lie outside the tested region, so individual coefficients are "
+        "not predictions anyone should use on their own.",
+    ),
+    Term(
+        "v_coded", "v (coded grade viscosity)",
+        "log10 of the HPMC grade's nominal viscosity, rescaled so the lowest grade is "
+        "-1 and the highest +1.",
+        "coded",
+        "A term ending in :v is how a composition effect changes with grade; :v^2 lets "
+        "that change be curved across the three grades.",
+    ),
+    Term(
+        "model_reduction", "model reduction",
+        "Removing model terms the data do not support, one at a time: the least "
+        "significant term that nothing else depends on goes, the model is refitted, "
+        "and this repeats until every remaining term is significant.",
+        "",
+        "Hierarchy is kept: a blend or grade term never stays without the terms it "
+        "builds on. The full model is kept if reduction would predict worse.",
+        "a dropped term means its effect is within the noise at this sample size, not "
+        "that it is zero.",
+    ),
+    Term(
+        "anova", "ANOVA",
+        "Analysis of variance: how much of the response's spread each group of model "
+        "terms accounts for, with an F-test for each.",
+        "",
+        "A small p next to a group means those terms move the response more than "
+        "noise would.",
+    ),
+    Term(
+        "lofo_cv", "leave-one-formulation-out (LOFO) cross-validation",
+        "Each formulation in turn is left out, the model is refitted without it, and "
+        "its profile is predicted. The error over all of them is the CV error.",
+        "",
+        "The honest estimate of how well the model predicts a formulation it has not "
+        "seen. Shown on every prediction.",
+    ),
+    Term(
+        "eta_squared", "share of spread (eta-squared)",
+        "The fraction of the case x grade spread in a response explained by "
+        "composition, by grade, and by their interaction. The three add to 100%.",
+        "%",
+        "Used in Q1 to say which lever matters more.",
+        "computed on formulation means; it says nothing about prediction error.",
+    ),
+    Term(
+        "spearman_rho", "Spearman rho",
+        "Rank correlation between two quantities.",
+        "-1 to 1",
+        "+1: always rise together; -1: one rises as the other falls; 0: no consistent "
+        "ordering.",
+        "a correlation across formulations is not a cause; composition variables move "
+        "together in a mixture design.",
+    ),
+    Term(
+        "q2", "Q2 (leave-one-out)",
+        "Predictive R2: how much of the spread a model explains for points it was not "
+        "fitted on.",
+        "up to 1",
+        "Near 1 predicts well; at or below 0 predicts no better than the average.",
+    ),
+    Term(
+        "equivalence_set", "equivalence set",
+        f"All formulations whose measured profile matches a target's with f2 >= "
+        f"{config.F2_SIMILAR_THRESHOLD:g}.",
+        "",
+        "A set spanning several grades means a grade can be substituted at that "
+        "composition.",
+    ),
+    Term(
+        "design_space", "tested region (design space)",
+        "The convex hull of the compositions actually run, in each grade.",
+        "",
+        "Predictions inside it are interpolation; outside, extrapolation, which the "
+        "tools refuse or flag.",
+    ),
+    Term(
+        "stress_test", "design stress test",
+        "Refitting on smaller and smaller subsets of the design to see how few runs "
+        "reach the same conclusions.",
+        "",
+        "The recommended size is the smallest subset whose prediction error and "
+        "conclusions match the full design; its runs are the plan for a new API.",
+    ),
+)
+
+# --- Manuscript questions -----------------------------------------------------
+_MANUSCRIPT: tuple[Term, ...] = (
+    Term(
+        "claim_status", "claim status",
+        "How strongly the data back a claim: supported, directional, not supported, "
+        "gated, or unavailable.",
+        "",
+        "Supported: clear of its uncertainty. Directional: consistent sign but size not "
+        "established, or a proxy measure. Gated: needs data this run does not have "
+        "(G1). Unavailable: an optional input, such as disintegration, was not given.",
+    ),
+    Term(
+        "shear_index", "shear index (proxy)",
+        "log10 of the disintegration time predicted from the tablet's dissolution time "
+        "scale (pooled Deming fit of ln DT on ln Td), over the measured disintegration "
+        "time.",
+        "log10 ratio",
+        "0: breaks up when its release speed says it should. Positive: breaks up earlier "
+        "under agitation than its release speed predicts, so more shear-sensitive.",
+        "a proxy from two different apparatus, not a measured response to paddle speed.",
+    ),
+    Term(
+        "solubility_gate", "G1 solubility gate",
+        "No claim about solubility is made until at least two APIs in each solubility "
+        "class have been run on the same design.",
+        "",
+        "With fewer, solubility cannot be told apart from everything else that differs "
+        "between the molecules.",
+    ),
+)
+
+# --- Formulator tools ---------------------------------------------------------
+_TOOLS: tuple[Term, ...] = (
+    Term(
+        "target_band", "target band",
+        "The +/- tolerance around each target time point in the target-profile tool.",
+        "% of dose",
+        "Defaults are +/-5% up to 2 h and +/-10% after.",
+        "a band narrower than the cross-validated error asks for more precision than "
+        "the model has.",
+    ),
+    Term(
+        "worst_miss", "worst miss (x band)",
+        "The largest deviation of a candidate's predicted profile from the target, in "
+        "units of that time point's band.",
+        "multiples of the band",
+        "Below 1: inside every band. Candidates within about 0.2 of each other are not "
+        "separated by the data.",
+    ),
+    Term(
+        "feasible_plausible", "inside every band vs within model error",
+        "Inside every band: the predicted profile meets every target. Within model "
+        "error: it only does once each miss is forgiven by the cross-validated error.",
+        "",
+        "Make and measure the second kind before relying on it.",
+    ),
+    Term(
+        "drug_load_third", "drug-load third",
+        "Low, mid or high third of the tested API wt% range, used to pick distinct "
+        "candidates in the shortlist.",
+    ),
+)
+
+
 def _constants() -> tuple[Term, ...]:
     """Every tunable constant, with its current value read from config."""
     return (
@@ -383,8 +676,25 @@ def _constants() -> tuple[Term, ...]:
     )
 
 
+def groups() -> tuple[tuple[str, tuple[Term, ...]], ...]:
+    """Every term, by topic, in the order the dashboard glossary lists them."""
+    # Imported here: the disintegration glossary imports Term from this module.
+    from pipeline.disintegration.glossary import TERMS as DISINTEGRATION
+
+    return (
+        ("Release metrics", _METRICS + _MORE_METRICS),
+        ("Plots", _PLOTS),
+        ("Models and methods", _METHODS),
+        ("Statistics", _STATISTICS),
+        ("Research questions", _MANUSCRIPT),
+        ("Formulator tools", _TOOLS),
+        ("Disintegration", DISINTEGRATION),
+        ("Settings (pipeline/config.py)", _constants()),
+    )
+
+
 def all_terms() -> tuple[Term, ...]:
-    return _METRICS + _STATISTICS + _constants()
+    return tuple(t for _, terms in groups() for t in terms)
 
 
 def as_dict() -> dict[str, dict[str, str]]:
@@ -397,9 +707,30 @@ def as_dict() -> dict[str, dict[str, str]]:
             "how_to_read": t.how_to_read,
             "caveat": t.caveat,
             "tooltip": t.tooltip(),
+            "group": group,
         }
-        for t in all_terms()
+        for group, terms in groups()
+        for t in terms
     }
+
+
+def render_glossary_md() -> str:
+    """``reports/glossary.md``: every term by topic, for reading beside the figures."""
+    out = ["# Glossary", "",
+           "Every term used in the figures, captions, reports and dashboard. "
+           "Generated by `pipeline.glossary`.", ""]
+    for group, terms in groups():
+        out += [f"## {group}", ""]
+        for t in terms:
+            line = f"**{t.label}**. {t.definition}"
+            if t.units:
+                line += f" *Units: {t.units}.*"
+            if t.how_to_read:
+                line += f" {t.how_to_read}"
+            if t.caveat:
+                line += f" **Careful:** {t.caveat}"
+            out += [line, ""]
+    return "\n".join(out)
 
 
 def render_parameters_md() -> str:

@@ -36,7 +36,7 @@ from pipeline.export.data_js import (
     write_api_set_js,
     write_data_js,
 )
-from pipeline.glossary import render_parameters_md
+from pipeline.glossary import render_glossary_md, render_parameters_md
 from pipeline.io.api_props import load_api_props
 from pipeline.io.load import load_database
 from pipeline.io.quality import render_markdown as quality_markdown
@@ -198,6 +198,7 @@ def _write_reports(
     (reports / "stress_test.md").write_text(
         render_stress(analysis, stress), encoding="utf-8", newline="\n"
     )
+    (reports / "glossary.md").write_text(render_glossary_md(), encoding="utf-8", newline="\n")
 
     docs.mkdir(parents=True, exist_ok=True)
     (docs / "parameters.md").write_text(
