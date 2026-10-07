@@ -171,6 +171,11 @@ PLOT_MAX_TIME_H: Final[float] = 25.0
 PLOT_MIN_RELEASE_PCT: Final[float] = 0.0
 PLOT_MAX_RELEASE_PCT: Final[float] = 115.0
 
+#: A formulation whose mean profile peaks above this is never picked as the
+#: example curve in a headline figure. It stays in every analysis and is
+#: flagged in the diagnostics; it is just not the picture of a result.
+SHOWCASE_MAX_PEAK_PCT: Final[float] = 115.0
+
 # --- Determinism (G10) ------------------------------------------------------
 #: Seed for every resample, CV split and optimiser start in this pipeline.
 #: Distinct from any seed used to generate a placeholder database.

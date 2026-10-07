@@ -173,9 +173,17 @@ def measured_profiles(analysis: Analysis) -> dict[tuple[int, str], MeasuredProfi
                               r["pct_released"].to_numpy(dtype=float), grid, gap)
             for r in reps
         ])
+        # Same rule as the analysis: a replicate that stops early is left out
+        # when two or more others run to the end.
+        if len(reps) > 1:
+            ends = [float(r["time_h"].max()) for r in reps]
+            done = [e >= max(ends) - 0.5 for e in ends]
+            if 2 <= sum(done) < len(reps):
+                stacked = stacked[np.array(done)]
         ok = np.isfinite(stacked).all(axis=0)
         mean = np.where(ok, stacked.mean(axis=0), np.nan)
-        sd = np.where(ok, stacked.std(axis=0, ddof=1) if len(reps) > 1 else 0.0, np.nan)
+        sd = np.where(ok, stacked.std(axis=0, ddof=1) if stacked.shape[0] > 1 else 0.0,
+                      np.nan)
         if dense:
             keep = np.zeros(grid.size, dtype=bool)
             keep[:: config.PLOT_POINT_STRIDE] = True
@@ -268,11 +276,28 @@ def case_legend(fig: Figure, handles: dict[int, Line2D], styles: dict[int, CaseS
         legend.get_texts()[i].set_fontweight("bold")
 
 
+def implausible(analysis: Analysis) -> set[tuple[int, str]]:
+    """Formulations whose mean profile peaks above the showcase limit."""
+    out: set[tuple[int, str]] = set()
+    for key, curve in analysis.observed_profiles.items():
+        vals = np.asarray(curve, dtype=float)
+        if vals.size and np.isfinite(vals).any() and np.nanmax(vals) > config.SHOWCASE_MAX_PEAK_PCT:
+            out.add((int(key[0]), str(key[1])))
+    return out
+
+
 def best_cross_grade_set(analysis: Analysis) -> EquivalenceSet | None:
-    cross = [s for s in analysis.equivalence if s.spans_multiple_grades]
+    """The equivalence set to show, never one built around an implausible curve."""
+    bad = implausible(analysis)
+    cross = [s for s in analysis.equivalence if s.spans_multiple_grades
+             and (s.target_case, s.target_grade) not in bad]
     if not cross:
         return None
-    return max(cross, key=lambda s: (len(s.grades_spanned), s.n_members))
+
+    def usable(s: EquivalenceSet) -> int:
+        return sum((m.case, m.grade) not in bad for m in s.members)
+
+    return max(cross, key=lambda s: (len(s.grades_spanned), usable(s)))
 
 
 # --- drawing primitives (shared with headlines) -------------------------------
@@ -321,10 +346,12 @@ def lever_caption(analysis: Analysis) -> str:
 
 def draw_equivalence(ax: Axes, analysis: Analysis, best: EquivalenceSet) -> int:
     """Overlay the target and up to three f2-similar members. Returns curves drawn."""
+    bad = implausible(analysis)
     others = [
         (m.case, m.grade)
         for m in best.members
         if (m.case, m.grade) != (best.target_case, best.target_grade)
+        and (m.case, m.grade) not in bad
     ][:3]
     shown = [(best.target_case, best.target_grade), *others]
     markers = ("o", "s", "^", "D")

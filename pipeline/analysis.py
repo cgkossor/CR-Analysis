@@ -108,12 +108,30 @@ def _mean_profiles(
             )
             for _, rep in group.groupby("replicate")
         ]
-        matrix = np.vstack(stacked)
+        matrix = complete_replicates(np.vstack(stacked))
         # A grid point is reported only where every replicate has a value, so
         # the mean never silently changes composition along the curve.
         mean = matrix.mean(axis=0)
         out[(int(case), str(grade))] = np.where(np.isfinite(matrix).all(axis=0), mean, np.nan)
     return out
+
+
+def complete_replicates(matrix: np.ndarray) -> np.ndarray:
+    """Drop replicates that stop early, when at least two others run to the end.
+
+    One vessel whose probe failed an hour in used to blank its formulation's
+    mean from that hour on, removing the formulation from every comparison
+    that needs the whole curve. The mean is instead taken over the complete
+    replicates for the whole curve, so it still never changes which replicates
+    it averages part-way along. With fewer than two complete replicates the
+    matrix is returned unchanged and the gap stays visible.
+    """
+    if matrix.shape[0] < 2:
+        return matrix
+    complete = np.isfinite(matrix[:, -1])
+    if complete.all() or complete.sum() < 2:
+        return matrix
+    return matrix[complete]
 
 
 def _lever_effects(
