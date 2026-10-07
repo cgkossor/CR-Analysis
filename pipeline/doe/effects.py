@@ -269,7 +269,20 @@ def interaction_profile(
     relative = divergence / typical if typical > 1e-12 else 0.0
     parallel = relative < 0.15
 
-    if parallel:
+    # Identical lines are not "parallel": they mean the model kept no grade
+    # term at all, which is a statement about the data's power, not about grade.
+    coincide = len(curves) > 1 and all(
+        np.allclose(c, curves[0], rtol=0.0, atol=1e-9) for c in curves[1:]
+    )
+    if coincide:
+        interpretation = (
+            "The lines coincide because no grade term survived model reduction for this "
+            "response: the model predicts the same value in every grade. That means the "
+            "measured differences between grades here are within the noise at this sample "
+            "size, not that grade has been shown to have no effect. Compare the measured "
+            "points in the Database Explorer before reading it as 'grade does not matter'."
+        )
+    elif parallel:
         interpretation = (
             f"The lines are close to parallel, so {component.upper()} and grade act "
             "roughly independently here: what you gain from one does not depend much "
