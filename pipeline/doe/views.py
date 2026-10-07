@@ -110,6 +110,56 @@ def piepel_traces(
     return out
 
 
+@dataclass(frozen=True)
+class TracePoint:
+    """A measured blend lying on one component's trace line."""
+
+    grade: str
+    component: str
+    case: int
+    x_wt: float     # the varied component's wt% in that blend
+    mean: float
+    sd: float
+    off_wt: float   # its distance from the trace line, wt%
+
+
+def points_on_traces(
+    ra: ResponseAnalysis,
+    design_points: pd.DataFrame,
+    replicates: pd.DataFrame | None,
+    tol_wt: float,
+) -> list[TracePoint]:
+    """Measured blends within ``tol_wt`` of each Piepel trace line.
+
+    The trace for component i runs, in pseudocomponents, from the reference blend
+    toward corner i. A blend is on it when its perpendicular distance from that
+    line, converted back to real wt%, is within the tolerance, and it falls
+    inside the stretch the trace covers.
+    """
+    from pipeline.doe.measured import measured_points
+
+    comp = design_comp(design_points)
+    reg = ternary.region(comp)
+    ref = (comp.mean(axis=0) - reg.lower) / reg.span
+    out: list[TracePoint] = []
+    for m in measured_points(ra, design_points, replicates):
+        z = (np.array([m.api_wt, m.hpmc_wt, m.lactose_wt]) / 100.0 - reg.lower) / reg.span
+        for i, name in enumerate(ternary.COMPONENTS):
+            d = np.eye(3)[i] - ref
+            dd = float(d @ d)
+            if dd <= 1e-12:
+                continue
+            t = float((z - ref) @ d / dd)
+            lo = -ref[i] / (1.0 - ref[i]) if ref[i] < 1 else 0.0
+            if t < lo - 1e-9 or t > 1.0 + 1e-9:
+                continue
+            off = float(np.linalg.norm(z - ref - t * d)) * reg.span * 100.0
+            if off <= tol_wt:
+                x = (m.api_wt, m.hpmc_wt, m.lactose_wt)[i]
+                out.append(TracePoint(m.grade, name, m.case, x, m.mean, m.sd, off))
+    return out
+
+
 def fitted_pairs(ra: ResponseAnalysis, design_points: pd.DataFrame
                  ) -> list[tuple[str, int, float, float]]:
     """(grade, case, measured, model-fitted) for every point the model used."""

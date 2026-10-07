@@ -176,6 +176,11 @@ PLOT_MAX_RELEASE_PCT: Final[float] = 115.0
 #: flagged in the diagnostics; it is just not the picture of a result.
 SHOWCASE_MAX_PEAK_PCT: Final[float] = 115.0
 
+#: A measured blend is drawn on a response trace only when it lies within this
+#: distance of the trace line, in wt% of composition. Further off, its value
+#: belongs to a different blend and comparing it with the line would mislead.
+TRACE_POINT_TOL_WT: Final[float] = 2.0
+
 # --- Determinism (G10) ------------------------------------------------------
 #: Seed for every resample, CV split and optimiser start in this pipeline.
 #: Distinct from any seed used to generate a placeholder database.

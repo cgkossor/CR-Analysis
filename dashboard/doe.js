@@ -229,6 +229,10 @@
       r.piepel.forEach(function (p) {
         p.traces.forEach(function (t) {
           t.y.forEach(function (v, i) { if (v !== null && isFinite(v)) { all.push(v); xs.push(t.x[i]); } });
+          (t.points || []).forEach(function (q) {
+            var e = q.sd !== null && isFinite(q.sd) ? q.sd : 0;
+            all.push(q.y - e, q.y + e);
+          });
         });
       });
       var yd = extent(all), xd = extent(xs, 0.02);
@@ -238,8 +242,25 @@
         var ch = new Chart(330, 260, { l: 52, r: 10, t: 22, b: 40 });
         ch.scales(xd, yd).axes("component (wt%)", r.label + " (" + r.units + ")");
         p.traces.forEach(function (t, i) {
+          var colour = FALLBACK[i % FALLBACK.length];
           ch.line(t.x, t.y.map(function (v) { return v === null ? NaN : v; }),
-                  FALLBACK[i % FALLBACK.length], { width: 2 });
+                  colour, { width: 2 });
+          /* Only measured blends lying on this trace line. */
+          (t.points || []).forEach(function (q) {
+            if (q.sd !== null && isFinite(q.sd) && q.sd > 0) {
+              ch.svg.appendChild(api.svgEl("line", {
+                x1: ch.px(q.x), x2: ch.px(q.x), y1: ch.py(q.y - q.sd), y2: ch.py(q.y + q.sd),
+                stroke: colour, "stroke-width": 1.2
+              }));
+            }
+            var dot = api.svgEl("circle", { cx: ch.px(q.x), cy: ch.py(q.y), r: 4.5,
+              fill: "#ffffff", stroke: colour, "stroke-width": 2 });
+            var tt = api.svgEl("title", {});
+            tt.textContent = "measured: case " + q.case + " / " + p.grade + " · " +
+              fmt(q.y, 1) + (q.sd !== null && isFinite(q.sd) ? " ± " + fmt(q.sd, 1) : "");
+            dot.appendChild(tt);
+            ch.svg.appendChild(dot);
+          });
         });
         var title = api.svgEl("text", { x: 56, y: 14, "font-size": 12, "font-weight": 600,
                                         fill: "#1c2330" });
@@ -254,7 +275,9 @@
       lg.innerHTML = r.piepel[0].traces.map(function (t, i) {
         return '<span><i style="background:' + FALLBACK[i % FALLBACK.length] + '"></i>' +
           names[t.component] + " rising</span>";
-      }).join("") + "<span>model prediction from the average tested blend; not measured data</span>";
+      }).join("") + "<span>lines: model prediction from the average tested blend</span>" +
+        "<span>open circles: measured blends lying on that line (± 1 SD); blends off " +
+        "the line are not shown</span>";
       host.appendChild(lg);
     }
 

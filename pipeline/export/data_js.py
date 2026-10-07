@@ -107,7 +107,8 @@ def _replicate_sd(a: Analysis, case: int, grade: str) -> np.ndarray:
 DASHBOARD_TERNARY_STEPS = 24
 
 
-def _mixture_views(ra: Any, design_points: pd.DataFrame) -> dict[str, Any]:
+def _mixture_views(ra: Any, design_points: pd.DataFrame,
+                   replicates: pd.DataFrame | None = None) -> dict[str, Any]:
     """Ternary, predicted-vs-actual and Piepel data for one response."""
     from pipeline.doe import ternary, views
 
@@ -119,6 +120,8 @@ def _mixture_views(ra: Any, design_points: pd.DataFrame) -> dict[str, Any]:
     tv = views.ternary_view(ra, design_points)
     pairs = views.fitted_pairs(ra, design_points)
     piepel = views.piepel_traces(ra, design_points)
+    on_trace = views.points_on_traces(ra, design_points, replicates,
+                                      config.TRACE_POINT_TOL_WT)
     return {
         "ternary": {
             "corners": [
@@ -150,7 +153,12 @@ def _mixture_views(ra: Any, design_points: pd.DataFrame) -> dict[str, Any]:
         "piepel": [
             {"grade": grade, "traces": [
                 {"component": t.component, "x": _clean(t.x_wt),
-                 "y": _clean(np.where(t.inside, t.y, np.nan))}
+                 "y": _clean(np.where(t.inside, t.y, np.nan)),
+                 "points": [
+                     {"case": q.case, "x": _clean(q.x_wt), "y": _clean(q.mean),
+                      "sd": _clean(q.sd)}
+                     for q in on_trace if q.grade == grade and q.component == t.component
+                 ]}
                 for t in trs
             ]}
             for grade, trs in piepel.items()
@@ -251,7 +259,8 @@ def _doe_payload(
             },
             # The standard mixture views: ternary contours with the measured
             # blends, predicted vs actual, and Piepel traces (methods).
-            **(_mixture_views(ra, design_points) if design_points is not None else {}),
+            **(_mixture_views(ra, design_points, replicates)
+               if design_points is not None else {}),
             "scale": _clean(list(ra.scale)),
             "takeaways": {
                 "anova": ra.takeaway_anova,

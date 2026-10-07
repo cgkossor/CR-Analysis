@@ -24,6 +24,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
+from pipeline import config
 from pipeline.doe import ternary, views
 from pipeline.doe.analysis import ResponseAnalysis
 from pipeline.doe.measured import MeasuredPoint
@@ -443,19 +444,34 @@ def draw_pred_actual(ax: Axes, ra: ResponseAnalysis,
 
 
 def draw_piepel(axes: Sequence[Axes], ra: ResponseAnalysis,
-                traces_by_grade: dict[str, list[views.PiepelTrace]]) -> None:
-    """Piepel traces per grade, drawn only inside the tested region."""
+                traces_by_grade: dict[str, list[views.PiepelTrace]],
+                on_trace: Sequence[views.TracePoint] = ()) -> None:
+    """Piepel traces per grade, inside the tested region, with the measured
+    blends that lie on each trace line (and only those)."""
     styles = ("-", "--", "-.")
+    markers = ("o", "s", "^")
     for k, (ax, (grade, trs)) in enumerate(zip(axes, traces_by_grade.items(), strict=False)):
         for i, tr in enumerate(trs):
             y = np.where(tr.inside, tr.y, np.nan)
-            ax.plot(tr.x_wt, y, color=pub.series_colour(i + 3), ls=styles[i],
+            colour = pub.series_colour(i + 3)
+            ax.plot(tr.x_wt, y, color=colour, ls=styles[i],
                     label=ternary.LABELS[tr.component])
+            pts = [p for p in on_trace if p.grade == grade and p.component == tr.component]
+            if pts:
+                ax.errorbar([p.x_wt for p in pts], [p.mean for p in pts],
+                            yerr=[p.sd if np.isfinite(p.sd) else 0.0 for p in pts],
+                            fmt=markers[i], color=colour, ms=4, mfc="white", mew=1.0,
+                            elinewidth=0.7, capsize=2, zorder=5)
         pub.header_note(ax, grade)
         ax.set_xlabel("Component (wt%)")
         if k == 0:
             ax.set_ylabel(_response_label(ra))
-            ax.legend(title="Model, varying", fontsize=6)
+            handles, labels = ax.get_legend_handles_labels()
+            if on_trace:
+                handles.append(Line2D([], [], color=pub.INK, marker="o", mfc="white", ls="none",
+                                      ms=4))
+                labels.append("measured blend on the line")
+            ax.legend(handles, labels, title="Model, varying", fontsize=6)
         pub.auto_minor(ax)
 
 
@@ -478,11 +494,13 @@ def pred_actual_figure(ra: ResponseAnalysis, design_points: pd.DataFrame, out: P
 
 
 def piepel_figure(ra: ResponseAnalysis, design_points: pd.DataFrame, out: Path,
-                  banner: str | None) -> str:
+                  banner: str | None, replicates: pd.DataFrame | None = None) -> str:
     traces_by_grade = views.piepel_traces(ra, design_points)
+    on_trace = views.points_on_traces(ra, design_points, replicates,
+                                      config.TRACE_POINT_TOL_WT)
     fig, axes = pub.new_figure(pub.DOUBLE, 2.4, ncols=len(traces_by_grade), sharey=True)
     axes = list(np.atleast_1d(axes))
-    draw_piepel(axes, ra, traces_by_grade)
+    draw_piepel(axes, ra, traces_by_grade, on_trace)
     pub.label_panels(axes)
     return pub.save(fig, out, f"doe_piepel_{ra.response.spec.key}", banner=banner)
 
@@ -530,20 +548,22 @@ def render_doe_figures(
                 pred_actual_figure(ra, design_points, out_dir, banner),
             ),
             FigureRecord(
-                f"DOE-pareto-{key}", "doe", 12,
+                f"DOE-pareto-{key}", "doe", 13,
                 f"Standardised effects on {label.lower()}, against the 5 % (dashed) and "
                 f"Bonferroni (dotted) significance lines. {_significant_terms(ra)}",
                 pareto(ra, out_dir, banner),
             ),
             FigureRecord(
-                f"DOE-piepel-{key}", "methods", 40,
-                f"Piepel response traces for {label.lower()}, one panel per grade "
-                "(supporting view). Each line is the model's prediction as one component "
-                "rises from the reference blend (the average tested blend) along its "
-                "Piepel direction, the other two keeping their ratio above their lowest "
-                "tested levels. It shows which component moves the response most; it is "
-                "a direction through one blend, not a picture of the measured data.",
-                piepel_figure(ra, design_points, out_dir, banner),
+                f"DOE-piepel-{key}", "doe", 12,
+                f"Piepel response traces for {label.lower()}, one panel per grade. Each "
+                "line is the model's prediction as one component rises from the reference "
+                "blend (the average tested blend) along its Piepel direction, the other "
+                "two keeping their ratio above their lowest tested levels; a steep line is "
+                "a component that moves the response. Open symbols (+/-1 SD) are the "
+                "measured blends lying on that trace line, within "
+                f"{config.TRACE_POINT_TOL_WT:g} wt%; blends off the line are not shown, "
+                "because their value belongs to a different blend.",
+                piepel_figure(ra, design_points, out_dir, banner, replicates),
             ),
         ]
     return made

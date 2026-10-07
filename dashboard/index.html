@@ -169,6 +169,14 @@
     <div id="doe-take-fit" class="callout"></div>
     <div id="doe-fit" class="chart"></div>
 
+    <h3>Which component moves this response?</h3>
+    <p class="hint">Piepel response traces: the model's prediction as one component rises
+      from the average tested blend, the other two keeping their ratio above their lowest
+      tested levels, inside the tested region only. A steep line is a component that moves
+      the response. Open circles are the measured blends lying on a trace line; blends off
+      the line are left out because their value belongs to a different blend.</p>
+    <div id="doe-piepel"></div>
+
     <h3>Which terms matter?</h3>
     <div id="doe-take-effects" class="callout"></div>
     <div class="split">
@@ -182,15 +190,6 @@
     <div id="doe-take-anova" class="callout"></div>
     <details><summary>ANOVA table</summary><div id="doe-anova" class="tablewrap"></div></details>
     <details><summary>How to read an ANOVA</summary><p id="m-anova"></p><p id="m-summary"></p></details>
-    <details class="advanced">
-      <summary>Methods: Piepel response traces</summary>
-      <p class="hint">The model's prediction as one component rises from the average
-        tested blend, the other two keeping their ratio above their lowest tested levels,
-        drawn inside the tested region only. It shows which component moves the response
-        most. It is a direction through one blend, not a picture of the measured data:
-        use the ternary and fit plots above for that.</p>
-      <div id="doe-piepel"></div>
-    </details>
     <div id="doe-unavailable"></div>
   </section>
 

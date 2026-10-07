@@ -352,8 +352,9 @@ _PLOTS: tuple[Term, ...] = (
         "",
         "A steep trace is a component that moves the response; a flat one barely does. "
         "It is the standard trace for a mixture whose components have lower limits.",
-        "it is a direction through one blend, not a picture of the measured data, so the "
-        "blends you made do not lie on it.",
+        "it is a direction through one blend. Only measured blends lying on a trace line "
+        "(within TRACE_POINT_TOL_WT) are drawn on it; in this design that is the average "
+        "blend on every trace, plus two more blends on the lactose trace.",
     ),
     Term(
         "interaction_plot", "interaction plot (not used)",
