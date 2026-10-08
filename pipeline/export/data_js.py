@@ -761,7 +761,7 @@ def build_payload(
 #: Figure folders shown in the dashboard's Figures tab, in display order.
 GALLERY_GROUPS: tuple[tuple[str, str], ...] = (
     ("headlines", "Headline figures"),
-    ("manuscript", "Manuscript figures"),
+    ("manuscript", "Research-question figures"),
     ("", "Dissolution figures"),
     ("disintegration", "Disintegration figures"),
 )
@@ -791,6 +791,24 @@ def figure_gallery(
                 continue
             items.append({
                 "group": group,
+                "id": str(entry["id"]),
+                "caption": str(entry["caption"]),
+                "src": os.path.relpath(png, dashboard_dir).replace(os.sep, "/"),
+            })
+    return items
+
+
+def paper_gallery(paper_dir: Path, dashboard_dir: Path) -> list[dict[str, Any]]:
+    """The curated main manuscript figures, listed first in the Figures tab."""
+    cap = paper_dir / "captions.json"
+    if not cap.exists():
+        return []
+    items: list[dict[str, Any]] = []
+    for entry in json.loads(cap.read_text(encoding="utf-8")):
+        png = paper_dir / entry["png"]
+        if png.exists():
+            items.append({
+                "group": "Main manuscript figures",
                 "id": str(entry["id"]),
                 "caption": str(entry["caption"]),
                 "src": os.path.relpath(png, dashboard_dir).replace(os.sep, "/"),

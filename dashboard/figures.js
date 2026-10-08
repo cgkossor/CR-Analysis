@@ -8,12 +8,36 @@
 (function (root) {
   "use strict";
 
+  var MAIN = "Main manuscript figures";
+  var showAll = false;
+
   function render(D, api) {
     var $ = api.$, el = api.el;
     var host = $("fg-body");
     host.innerHTML = "";
-    var items = D.figures || [];
-    if (!items.length) return;
+    var every = D.figures || [];
+    if (!every.length) return;
+
+    /* The curated main figures first and alone by default; every other figure
+     * is one click away rather than a wall to scroll past. */
+    var nMain = every.filter(function (f) { return f.group === MAIN; }).length;
+    var items = every;
+    if (nMain) {
+      var bar = el("div", { class: "controls" });
+      var lab = el("label", null, "Show ");
+      var pick = el("select", { id: "fg-show" });
+      pick.appendChild(el("option", { value: "main" }, "Main manuscript figures (" + nMain + ")"));
+      pick.appendChild(el("option", { value: "all" }, "All figures (" + every.length + ")"));
+      pick.value = showAll ? "all" : "main";
+      pick.addEventListener("change", function () {
+        showAll = pick.value === "all";
+        render(D, api);
+      });
+      lab.appendChild(pick);
+      bar.appendChild(lab);
+      host.appendChild(bar);
+      if (!showAll) items = every.filter(function (f) { return f.group === MAIN; });
+    }
 
     /* Group headers in the order the pipeline listed them. */
     var groups = [];

@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from scipy import stats
@@ -173,6 +173,24 @@ def answer(analysis: Analysis) -> tuple[QuestionResult, list[Swap]]:
     ), sw
 
 
+def draw_pair(ax: Any, sw: list[Swap], ga: str, gb: str) -> None:
+    """One grade pair on the composition map: filled where the swap works."""
+    from pipeline.figures import publication as pub
+
+    pair = [s for s in sw if (s.grade_a, s.grade_b) == (ga, gb) and s.valid]
+    for s in pair:
+        ax.scatter(s.api_wt, s.hpmc_wt, s=34,
+                   facecolor=pub.OKABE_ITO[3] if s.similar else "white",
+                   edgecolor=pub.OKABE_ITO[3] if s.similar else pub.INK,
+                   linewidth=0.8, zorder=3)
+        ax.annotate(f"{s.f2:.0f}", (s.api_wt, s.hpmc_wt), xytext=(4, 3),
+                    textcoords="offset points", fontsize=6, color=pub.MUTED)
+    pub.header_note(ax, f"{ga} vs {gb}")
+    ax.margins(x=0.12, y=0.12)
+    ax.set_xlabel("API (wt%)")
+    pub.auto_minor(ax)
+
+
 def render(
     analysis: Analysis, sw: list[Swap], out: Path, banner: str | None
 ) -> list[FigureRecord]:
@@ -187,20 +205,9 @@ def render(
     fig, axes = pub.new_figure(pub.DOUBLE, 2.6, ncols=len(pairs), sharex=True, sharey=True)
     axes = list(np.atleast_1d(axes))
     for i, (ax, (ga, gb)) in enumerate(zip(axes, pairs, strict=True)):
-        pair = [s for s in sw if (s.grade_a, s.grade_b) == (ga, gb) and s.valid]
-        for s in pair:
-            ax.scatter(s.api_wt, s.hpmc_wt, s=34,
-                       facecolor=pub.OKABE_ITO[3] if s.similar else "white",
-                       edgecolor=pub.OKABE_ITO[3] if s.similar else pub.INK,
-                       linewidth=0.8, zorder=3)
-            ax.annotate(f"{s.f2:.0f}", (s.api_wt, s.hpmc_wt), xytext=(4, 3),
-                        textcoords="offset points", fontsize=6, color=pub.MUTED)
-        pub.header_note(ax, f"{ga} vs {gb}")
-        ax.margins(x=0.12, y=0.12)
-        ax.set_xlabel("API (wt%)")
+        draw_pair(ax, sw, ga, gb)
         if i == 0:
             ax.set_ylabel("HPMC (wt%)")
-        pub.auto_minor(ax)
     pub.label_panels(axes)
     file = pub.save(fig, out, FIGURE_ID, banner=banner)
     caption = (

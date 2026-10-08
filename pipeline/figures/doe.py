@@ -418,8 +418,12 @@ def draw_ternary(fig: Figure, axes: Sequence[Axes], ra: ResponseAnalysis,
 
 def draw_pred_actual(ax: Axes, ra: ResponseAnalysis,
                      pairs: Sequence[tuple[str, int, float, float]],
-                     order: Sequence[str] = ()) -> None:
-    """Measured against fitted, by grade, with the 1:1 line."""
+                     order: Sequence[str] = (), compact: bool = False) -> None:
+    """Measured against fitted, by grade, with the 1:1 line.
+
+    ``compact`` shortens the labels for a small panel inside a composite
+    figure: the response is named by the neighbouring panels' colour bar.
+    """
     present = set(g for g, *_ in pairs)
     grades = [g for g in order if g in present] + sorted(present - set(order))
     for i, grade in enumerate(grades):
@@ -434,13 +438,20 @@ def draw_pred_actual(ax: Axes, ra: ResponseAnalysis,
         ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], color=pub.INK, lw=0.7, ls="--")
         ax.set_xlim(lo - pad, hi + pad)
         ax.set_ylim(lo - pad, hi + pad)
-    ax.set_xlabel(f"Predicted {_response_label(ra)}")
-    ax.set_ylabel(f"Measured {_response_label(ra)}")
-    pub.corner_note(ax, f"R² = {ra.fit.r_squared:.2f}, predicted R² = "
-                        f"{ra.fit.pred_r_squared:.2f}", "upper left")
+    units = ra.response.spec.units
+    if compact:
+        ax.set_xlabel(f"Predicted ({units})" if units else "Predicted")
+        ax.set_ylabel(f"Measured ({units})" if units else "Measured")
+        pub.corner_note(ax, f"R² {ra.fit.r_squared:.2f}\nQ² {ra.fit.pred_r_squared:.2f}",
+                        "upper left")
+    else:
+        ax.set_xlabel(f"Predicted {_response_label(ra)}")
+        ax.set_ylabel(f"Measured {_response_label(ra)}")
+        pub.corner_note(ax, f"R² = {ra.fit.r_squared:.2f}, predicted R² = "
+                            f"{ra.fit.pred_r_squared:.2f}", "upper left")
     ax.set_aspect("equal", adjustable="box")
     pub.auto_minor(ax)
-    ax.legend(loc="lower right", title="Grade", fontsize=6)
+    ax.legend(loc="lower right", title=None if compact else "Grade", fontsize=6)
 
 
 def draw_piepel(axes: Sequence[Axes], ra: ResponseAnalysis,

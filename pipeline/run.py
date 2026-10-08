@@ -33,6 +33,7 @@ from pipeline.diagnostics import write as write_diagnostics
 from pipeline.export.data_js import (
     build_payload,
     figure_gallery,
+    paper_gallery,
     write_api_set_js,
     write_data_js,
 )
@@ -223,6 +224,10 @@ class ApiRun:
     gallery: list[dict[str, Any]] | None
     payload: dict[str, Any]
     audit: AuditReport
+    stress: StressTest
+    disintegration: Any
+    #: The curated manuscript figures, shared by every API in the run.
+    paper: list[dict[str, Any]] | None = None
 
 
 def _dt_files(args: argparse.Namespace) -> list[str | None]:
@@ -289,6 +294,12 @@ def _run(args: argparse.Namespace) -> int:
     for r in runs:
         if r.api in props:
             r.payload["api_props"] = props[r.api]
+
+    if not args.skip_figures:
+        paper = _render_paper(runs, Path(args.outputs), Path(args.dashboard), multi=multi)
+        for r in runs:
+            r.paper = paper
+            _add_paper(r.payload, paper)
 
     dashboard = Path(args.dashboard) / "data.js"
     data_path = _write_dashboard(runs, props, dashboard)
@@ -414,7 +425,32 @@ def _run_one(
     )
     payload, audit = _payload(analysis, stress, diagnostics, source, dt, dt_file, gallery)
     return ApiRun(api, source, dt_file, out_root, analysis, diagnostics, dt is not None,
-                  gallery, payload, audit)
+                  gallery, payload, audit, stress, dt)
+
+
+def _render_paper(
+    runs: list[ApiRun], outputs: Path, dashboard: Path, *, multi: bool
+) -> list[dict[str, Any]]:
+    """The curated main figures across every API in the run.
+
+    With several APIs they go to outputs/paper/, beside the per-API folders;
+    with one, to outputs/figures/paper/.
+    """
+    from pipeline.manuscript import build as build_ms
+    from pipeline.paper import PaperInput, render_paper
+
+    inputs = [PaperInput(r.api, r.analysis, r.stress, r.disintegration,
+                         build_ms(r.analysis, r.disintegration)) for r in runs]
+    out = outputs / "paper" if multi else outputs / "figures" / "paper"
+    records = render_paper(inputs, out, {r.api: r.out_root / "figures" for r in runs})
+    print(f"Manuscript main figures -> {len(records)} in {out}")
+    return paper_gallery(out, dashboard)
+
+
+def _add_paper(payload: dict[str, Any], paper: list[dict[str, Any]] | None) -> None:
+    """Put the curated main figures first in the Figures tab."""
+    if paper:
+        payload["figures"] = list(paper) + list(payload.get("figures") or [])
 
 
 def _check_determinism(run: ApiRun, props: dict[str, dict[str, Any]]) -> int:
@@ -436,6 +472,7 @@ def _check_determinism(run: ApiRun, props: dict[str, dict[str, Any]]) -> int:
         )[0]
         if run.api in props:
             payload["api_props"] = props[run.api]
+        _add_paper(payload, run.paper)
         again = write_data_js(payload, Path(tmp) / "again.js")
         second = hashlib.sha256(again.read_bytes()).hexdigest()
     if first != second:

@@ -173,3 +173,26 @@ def test_api_names_sharing_a_folder_are_refused(tmp_path: Path) -> None:
                  "--outputs", str(out), "--dashboard", str(tmp_path / "d"), "--skip-figures"])
     assert code == 2
     assert not (tmp_path / "d" / "data.js").exists(), "data.js written after a failed input"
+
+
+def test_paper_figures_span_every_api(tmp_path: Path) -> None:
+    """The curated main figures are drawn once, across all APIs in the run."""
+    from pipeline.analysis import run_analysis
+    from pipeline.manuscript import build
+    from pipeline.paper import PaperInput, headline_response, render_paper
+    from pipeline.run import _stress
+
+    second = make_api_workbook(_workbook(), tmp_path / "api_b.xlsx", "API_B", 1.6)
+    inputs = []
+    for api, src in (("API_1", _workbook()), ("API_B", second)):
+        a = run_analysis(load_database(src))
+        inputs.append(PaperInput(api, a, _stress(a), None, build(a, None)))
+    records = render_paper(inputs, tmp_path / "paper")
+    ids = [r.id for r in records]
+    # No disintegration data here, so Fig 7 is left out rather than drawn empty.
+    assert ids == ["Fig1", "Fig2", "Fig3", "Fig4", "Fig5", "Fig6", "Fig8"]
+    assert headline_response(inputs) is not None
+    for name in ("captions.json", "captions.md", "Table1_design.csv", "supplementary.md"):
+        assert (tmp_path / "paper" / name).exists(), name
+    caps = json.loads((tmp_path / "paper" / "captions.json").read_text(encoding="utf-8"))
+    assert any("API_1" in c["caption"] and "API_B" in c["caption"] for c in caps)

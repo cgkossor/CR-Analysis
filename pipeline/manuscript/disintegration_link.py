@@ -11,7 +11,7 @@ link can be trusted.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -118,33 +118,51 @@ def answer(dt: DisintegrationAnalysis | None) -> QuestionResult:
     )
 
 
+def drawable(dt: DisintegrationAnalysis) -> bool:
+    """At least three uncensored formulations and a pooled fit."""
+    m = dt.matched
+    m = m[~m["dt_censored"].astype(bool)] if "dt_censored" in m else m
+    return len(m) >= 3 and any(f.label == "all grades" for f in dt.correlation.deming)
+
+
+def draw_dt(ax: Any, dt: DisintegrationAnalysis, legend: bool = True) -> Any:
+    """DT against Td on log axes by grade, with the pooled Deming line."""
+    from pipeline.figures import publication as pub
+
+    m = dt.matched
+    m = m[~m["dt_censored"].astype(bool)] if "dt_censored" in m else m
+    for i, g in enumerate(dt.grade_order):
+        sub = m[m["grade"] == g]
+        if sub.empty:
+            continue
+        st = pub.grade_style(str(g), i)
+        ax.plot(sub["td_h"], sub["dt_h"], ls="none", marker=st.marker, color=st.colour,
+                ms=4, label=str(g))
+    pooled = next((f for f in dt.correlation.deming if f.label == "all grades"), None)
+    if pooled is not None and len(m):
+        xs = np.linspace(float(m["td_h"].min()), float(m["td_h"].max()), 50)
+        ax.plot(xs, np.exp(pooled.intercept + pooled.slope * np.log(xs)), color=pub.INK,
+                lw=1)
+    pub.log_axis(ax, "x")
+    pub.log_axis(ax, "y")
+    ax.set_xlabel("Dissolution time scale Td (h)")
+    ax.set_ylabel("Disintegration time DT (h)")
+    if legend:
+        ax.legend(frameon=False, loc="upper left")
+    return pooled
+
+
 def render(dt: DisintegrationAnalysis | None, out: Path, banner: str | None
            ) -> list[FigureRecord]:
     """ln DT against ln Td by grade, with the pooled Deming line."""
     from pipeline.figures import publication as pub
 
-    if dt is None:
-        return []
-    m = dt.matched
-    m = m[~m["dt_censored"].astype(bool)] if "dt_censored" in m else m
-    if len(m) < 3:
+    if dt is None or not drawable(dt):
         return []
     fig, ax = pub.new_figure(pub.SINGLE, 2.8)
-    for i, g in enumerate(dt.grade_order):
-        sub = m[m["grade"] == g]
-        st = pub.grade_style(str(g), i)
-        ax.plot(sub["td_h"], sub["dt_h"], ls="none", marker=st.marker, color=st.colour,
-                ms=4, label=str(g))
-    pooled = next((f for f in dt.correlation.deming if f.label == "all grades"), None)
+    pooled = draw_dt(ax, dt)
     if pooled is None:
         return []
-    xs = np.linspace(float(m["td_h"].min()), float(m["td_h"].max()), 50)
-    ax.plot(xs, np.exp(pooled.intercept + pooled.slope * np.log(xs)), color=pub.INK, lw=1)
-    pub.log_axis(ax, "x")
-    pub.log_axis(ax, "y")
-    ax.set_xlabel("Dissolution time scale Td (h)")
-    ax.set_ylabel("Disintegration time DT (h)")
-    ax.legend(frameon=False, loc="upper left")
     file = pub.save(fig, out, FIGURE_ID, banner=banner)
     caption = (
         "Disintegration time against the Weibull dissolution time scale, both on log "
