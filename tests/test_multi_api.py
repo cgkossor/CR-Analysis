@@ -196,3 +196,6 @@ def test_paper_figures_span_every_api(tmp_path: Path) -> None:
         assert (tmp_path / "paper" / name).exists(), name
     caps = json.loads((tmp_path / "paper" / "captions.json").read_text(encoding="utf-8"))
     assert any("API_1" in c["caption"] and "API_B" in c["caption"] for c in caps)
+    # Every main figure says why it matters, beside its caption.
+    assert all(c["context"] for c in caps)
+    assert "Why it matters." in (tmp_path / "paper" / "captions.md").read_text(encoding="utf-8")

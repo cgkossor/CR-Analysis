@@ -222,3 +222,4 @@ dl.glossary .gl-careful { color: var(--warn); }
 dl.glossary dt.gl-hit { background: #fff3cd; }
 abbr.tip[data-term]:not([data-term=""]) { cursor: help; }
 #gl-search { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; width: 260px; }
+.fg-context { margin: 6px 0 0; color: var(--muted); font-size: 12.5px; }

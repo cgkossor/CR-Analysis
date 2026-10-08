@@ -811,6 +811,7 @@ def paper_gallery(paper_dir: Path, dashboard_dir: Path) -> list[dict[str, Any]]:
                 "group": "Main manuscript figures",
                 "id": str(entry["id"]),
                 "caption": str(entry["caption"]),
+                "context": str(entry.get("context", "")),
                 "src": os.path.relpath(png, dashboard_dir).replace(os.sep, "/"),
             })
     return items

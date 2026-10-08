@@ -62,6 +62,69 @@ ROW_H = 2.25
 SURFACE_ROW_H = 2.7
 
 
+#: Background for each main figure: why it matters, beside its caption.
+CONTEXT: dict[str, str] = {
+    "Fig1": (
+        "In a mixture the components sum to 100%, so no component can change on its own: "
+        "raising HPMC must lower API, lactose or both. The tested blends therefore define a "
+        "constrained region, and every conclusion in the paper is an interpolation inside it. "
+        "Showing that region first tells the reader where the results hold, and using the "
+        "same blends for every API is what makes the cross-API comparisons direct."
+    ),
+    "Fig2": (
+        "In a hydrophilic HPMC matrix the polymer hydrates into a gel layer that controls "
+        "release, by drug diffusion through the gel and by erosion of the gel itself. The "
+        "measured profiles are the primary evidence for everything that follows: they show "
+        "how large the composition and grade effects are, and the replicate spread shows how "
+        "precisely they were measured, before any model is involved."
+    ),
+    "Fig3": (
+        "A formulator has two practical handles on release rate: how much HPMC to use and "
+        "which viscosity grade. Knowing which dominates tells which to adjust first, and the "
+        "interaction share tells whether rules learned in one grade carry over to another. A "
+        "large interaction means the effect of HPMC content depends on the grade, so neither "
+        "lever can be set without the other."
+    ),
+    "Fig4": (
+        "The fitted response surface turns 33 measured formulations into a prediction for any "
+        "blend in the tested region, which is the basis of a formulation design space in the "
+        "sense of ICH Q8. The ternary plot is the standard way to show a three-component "
+        "response, and the predicted-vs-actual panel, with the leave-one-out Q², is the "
+        "evidence that the surface predicts formulations it was not fitted to rather than "
+        "merely reproducing them."
+    ),
+    "Fig5": (
+        "Release rate alone does not say how the drug leaves the matrix. The Weibull shape "
+        "parameter is commonly read as a mechanism indicator, from diffusion-dominated "
+        "release at low values to erosion-influenced and sigmoidal release at higher ones. "
+        "Mechanism matters for robustness: erosion-controlled release tends to be more "
+        "sensitive to hydrodynamics and gastrointestinal conditions than diffusion-controlled "
+        "release, and it is also where API solubility is expected to act."
+    ),
+    "Fig6": (
+        "HPMC grades are often treated as interchangeable when a supplier or grade changes, "
+        "yet a change in the release-controlling excipient is a significant post-approval "
+        "change. The f2 similarity factor (f2 >= 50) is the regulatory criterion for "
+        "comparing dissolution profiles, so mapping where grade pairs pass it shows where a "
+        "substitution is likely to be defensible and where it would alter release. A "
+        "regulatory case would still need its own batches."
+    ),
+    "Fig7": (
+        "Disintegration testing takes minutes to hours, against a day for a full dissolution "
+        "profile. If disintegration time tracks the dissolution time scale, it could screen "
+        "formulations or support quality control. The pooled fit tests the relationship "
+        "across grades; whether it also holds within each grade decides whether "
+        "disintegration ranks formulations or merely separates grades."
+    ),
+    "Fig8": (
+        "Each new API would otherwise need the full 33-run design. Showing how prediction "
+        "error grows as runs are removed identifies the smallest design that reaches the same "
+        "conclusions, which sets the experimental cost of extending the study to further "
+        "APIs, including the low-solubility ones still in progress."
+    ),
+}
+
+
 @dataclass(frozen=True)
 class PaperInput:
     """One API's results, as the paper figures need them."""
@@ -432,7 +495,10 @@ def render_paper(
     banner = _banner(inputs)
     makers = (fig1_design, fig2_profiles, fig3_levers, fig4_surface, fig5_mechanism,
               fig6_grade_swap, fig7_disintegration, fig8_reduced)
-    records = [r for r in (m(inputs, out, banner) for m in makers) if r is not None]
+    from dataclasses import replace
+
+    records = [replace(r, context=CONTEXT.get(r.id, ""))
+               for r in (m(inputs, out, banner) for m in makers) if r is not None]
     pub.write_captions(records, out, "Manuscript figures (main)")
     _write_supplementary_index(out, supplementary or {})
     return records

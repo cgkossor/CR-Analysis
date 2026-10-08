@@ -74,6 +74,12 @@
         var cap = el("figcaption");
         cap.appendChild(el("b", null, f.id + ". "));
         cap.appendChild(document.createTextNode(f.caption));
+        if (f.context) {
+          var why = el("p", { class: "fg-context" });
+          why.appendChild(el("b", null, "Why it matters. "));
+          why.appendChild(document.createTextNode(f.context));
+          cap.appendChild(why);
+        }
         card.appendChild(cap);
         grid.appendChild(card);
       });

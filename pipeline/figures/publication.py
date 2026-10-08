@@ -362,6 +362,9 @@ class FigureRecord:
     rank: int
     caption: str
     file: str
+    #: Why the figure matters: background for a reader, kept apart from the
+    #: caption, which says only what is drawn.
+    context: str = ""
 
 
 def write_captions(records: Sequence[FigureRecord], out_dir: Path, title: str) -> None:
@@ -374,6 +377,7 @@ def write_captions(records: Sequence[FigureRecord], out_dir: Path, title: str) -
             "section": r.section,
             "rank": r.rank,
             "caption": r.caption,
+            "context": r.context,
             "png": r.file,
         }
         for r in ordered
@@ -384,4 +388,6 @@ def write_captions(records: Sequence[FigureRecord], out_dir: Path, title: str) -
     lines = [f"# {title}", ""]
     for r in ordered:
         lines += [f"## {r.id} — `{r.file}`", "", r.caption, ""]
+        if r.context:
+            lines += [f"*Why it matters.* {r.context}", ""]
     (out_dir / "captions.md").write_text("\n".join(lines), encoding="utf-8", newline="\n")
