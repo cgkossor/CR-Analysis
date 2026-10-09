@@ -164,3 +164,26 @@ def test_shear_index_is_not_release_speed_in_disguise(with_dt) -> None:  # type:
                                 [np.log10(p.td_h / p.dt_h) for p in pts]).statistic
     assert abs(rho_index) < abs(rho_ratio), "the residual index still tracks release speed"
     assert ms.questions[2].readiness["index_rho_ln_td"] is not None
+
+
+def test_within_grade_index_removes_the_grade_offset(with_dt) -> None:  # type: ignore[no-untyped-def]
+    """The within-grade index compares a tablet only with its grade-mates.
+
+    It averages zero within each grade (least squares with a grade offset), and
+    the grade shift is the mean gap between the pooled and within-grade index.
+    """
+    import numpy as np
+
+    from pipeline.manuscript.shear import grade_shifts
+
+    a, dt = with_dt
+    ms = manuscript.build(a, dt)
+    pts = [p for p in ms.shear_points if np.isfinite(p.index_within)]
+    assert len(pts) >= 4
+    shifts = grade_shifts(ms.shear_points)
+    for g in {p.grade for p in pts}:
+        w = [p.index_within for p in pts if p.grade == g]
+        assert abs(float(np.mean(w))) < 1e-9
+    v = next(iter(ms.shear.values()))
+    assert {"index", "tier", "index_within", "tier_within"} <= set(v)
+    assert ms.questions[2].readiness["grade_shift"].keys() == shifts.keys()
