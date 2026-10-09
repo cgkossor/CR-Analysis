@@ -191,7 +191,7 @@ def test_paper_figures_span_every_api(tmp_path: Path) -> None:
     ids = [r.id for r in records]
     # No disintegration data here, so Fig 7 is left out rather than drawn empty.
     assert ids == ["Scheme1", "Fig1", "Fig2", "Fig3", "Fig4", "Fig5", "Fig6", "Fig6A",
-                   "Fig8"]
+                   "Fig8", "Fig8A"]
     # t50 is too sparse for API_B, so Fig 4 is already on MDT and needs no Fig 4A.
     assert headline_response(inputs) == "mdt_h"
     assert headline_response(inputs) is not None
@@ -250,3 +250,18 @@ def test_mdt_alternative_accompanies_a_t50_surface(tmp_path: Path) -> None:
     assert alt.rank == records["Fig4"].rank
     assert "mean dissolution time" in alt.caption and "lower bound" in alt.caption
     assert (tmp_path / "paper" / alt.file).exists()
+
+
+def test_run_plan_lists_exactly_the_recommended_runs(tmp_path: Path) -> None:
+    """Fig 8A names every run of the recommended reduced design, and no other."""
+    from pipeline.analysis import run_analysis
+    from pipeline.manuscript import build
+    from pipeline.paper import PaperInput, run_plan
+    from pipeline.run import _stress
+
+    a = run_analysis(load_database(_workbook()))
+    p = PaperInput("API_1", a, _stress(a), None, build(a, None))
+    plan = run_plan(p)
+    assert plan is not None and p.stress.recommended is not None
+    listed = {(c, g) for g, cs in plan.items() for c in cs}
+    assert listed == {(int(c), str(g)) for c, g in p.stress.recommended.selected}

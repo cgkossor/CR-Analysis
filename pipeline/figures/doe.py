@@ -352,6 +352,43 @@ def _levels(lo: float, hi: float) -> Any:
             if np.isfinite(lo) and np.isfinite(hi) and hi > lo else 10)
 
 
+def draw_run_plan(axes: Sequence[Axes], reg: ternary.Region, xy: np.ndarray,
+                  keys: Sequence[tuple[int, str]], grades: Sequence[str],
+                  selected: set[tuple[int, str]]) -> None:
+    """One triangle per grade: the blends to run filled and numbered, the rest open.
+
+    The triangle is shaded light grey so its white grid lines, drawn for
+    contour backgrounds elsewhere, stay visible on an otherwise empty panel.
+    """
+    from matplotlib.patches import Polygon
+
+    centre = ternary.CORNERS.mean(axis=0)
+    for k, (ax, grade) in enumerate(zip(axes, grades, strict=False)):
+        ax.add_patch(Polygon(ternary.CORNERS, closed=True, facecolor="#E9E9E9",
+                             edgecolor="none", zorder=1))
+        _draw_triangle(ax, reg)
+        st = pub.grade_style(grade, k)
+        for (x, y), (case, g) in zip(xy, keys, strict=True):
+            if g != grade:
+                continue
+            run = (case, g) in selected
+            ax.scatter([x], [y], s=34 if run else 18, marker=st.marker,
+                       facecolor=st.colour if run else "white",
+                       edgecolor=pub.INK if run else pub.MUTED,
+                       linewidth=0.7, zorder=6)
+            if run:
+                # Number set inward, towards the centre: outside the triangle it
+                # would collide with the edge ticks and corner names.
+                d = centre - np.array([x, y])
+                d = d / (np.linalg.norm(d) or 1.0) * 8.0
+                ax.annotate(str(case), (x, y), xytext=(d[0], d[1]), textcoords="offset points",
+                            ha="center", va="center", fontsize=6, fontweight="bold",
+                            color=pub.INK, zorder=7)
+        n_run = sum(1 for case, g in keys if g == grade and (case, g) in selected)
+        n_all = sum(1 for _, g in keys if g == grade)
+        pub.header_note(ax, f"{grade}: run {n_run} of {n_all}")
+
+
 def _draw_triangle(ax: Axes, reg: ternary.Region) -> None:
     """Outline, real-wt% grid lines and corner labels of the pseudocomponent triangle.
 

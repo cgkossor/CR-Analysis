@@ -119,6 +119,13 @@ CONTEXT: dict[str, str] = {
         "formulations have a ready substitute in another grade and which have none, "
         "which is the practical question when a grade is unavailable or changes supplier."
     ),
+    "Fig8A": (
+        "A run count alone does not tell a formulator what to make. Placing the "
+        "recommended runs on the design triangles shows which blends and grades a new "
+        "API needs, and that they span the corners and edges of the design space "
+        "rather than clustering, which is what lets the reduced set estimate the same "
+        "model."
+    ),
     "Fig5": (
         "Release rate alone does not say how the drug leaves the matrix. The Weibull shape "
         "parameter is commonly read as a mechanism indicator, from diffusion-dominated "
@@ -699,6 +706,63 @@ def fig8_reduced(inputs: list[PaperInput], out: Path, banner: str | None) -> Fig
     )
 
 
+def run_plan(p: PaperInput) -> dict[str, list[int]] | None:
+    """The recommended reduced design as {grade: [cases]}, grades by viscosity."""
+    rec = p.stress.recommended
+    if rec is None:
+        return None
+    grades = render.grades_by_viscosity(p.analysis)
+    chosen = {(int(c), str(g)) for c, g in rec.selected}
+    return {g: sorted(c for c, gg in chosen if gg == g) for g in grades}
+
+
+def fig8a_run_plan(inputs: list[PaperInput], out: Path, banner: str | None
+                   ) -> FigureRecord | None:
+    """The recommended reduced design on the design triangles, one row per API."""
+    rows = []
+    for p in inputs:
+        plan = run_plan(p)
+        if plan is not None:
+            rows.append((p, plan))
+    if not rows:
+        return None
+    pub.apply_style()
+    import matplotlib.pyplot as plt
+
+    n = len(rows)
+    fig = plt.figure(figsize=(pub.DOUBLE, SURFACE_ROW_H * n + 0.2), layout="constrained")
+    subs = fig.subfigures(n, 1, squeeze=False)
+    letters: list[Any] = []
+    parts = []
+    for (p, plan), sub in zip(rows, subs[:, 0], strict=True):
+        dp = p.analysis.design_points
+        comp = views.design_comp(dp)
+        reg = ternary.region(comp)
+        keys = [(int(c), str(g)) for c, g in zip(dp["case"], dp["grade"], strict=True)]
+        grades = list(plan)
+        selected = {(c, g) for g, cs in plan.items() for c in cs}
+        axes = list(np.atleast_1d(sub.subplots(1, len(grades))))
+        doefig.draw_run_plan(axes, reg, reg.to_xy(comp), keys, grades, selected)
+        if n > 1:
+            sub.suptitle(p.api, x=0.01, ha="left", fontsize=8, fontweight="bold")
+        letters += axes
+        listing = "; ".join(f"{g}: case{'s' if len(cs) != 1 else ''} "
+                            + (", ".join(str(c) for c in cs) if cs else "none")
+                            for g, cs in plan.items())
+        parts.append((f"{p.api} " if n > 1 else "")
+                     + f"({len(selected)} of {len(keys)} runs) {listing}")
+    pub.label_panels(letters)
+    return FigureRecord(
+        "Fig8A", "main", 8,
+        "Recommended reduced design on the design space"
+        + (" (rows: one per API)" if n > 1 else "")
+        + ". One triangle per HPMC grade over the tested blends; filled, numbered "
+        "markers are the formulations to make (case number beside each), open markers "
+        "those the reduced design leaves out. Runs: " + ". ".join(parts) + ".",
+        pub.save(fig, out, "Fig8A_run_plan", banner=banner),
+    )
+
+
 # --- the set -----------------------------------------------------------------
 
 
@@ -711,7 +775,8 @@ def render_paper(
         stale.unlink()
     banner = _banner(inputs)
     makers = (fig1_design, fig2_profiles, fig3_levers, fig4_surface, fig4a_mdt, fig5_mechanism,
-              fig6_grade_swap, fig6a_equivalence, fig7_disintegration, fig8_reduced)
+              fig6_grade_swap, fig6a_equivalence, fig7_disintegration, fig8_reduced,
+              fig8a_run_plan)
     from dataclasses import replace
 
     made = [scheme1_metrics(out)] + [m(inputs, out, banner) for m in makers]

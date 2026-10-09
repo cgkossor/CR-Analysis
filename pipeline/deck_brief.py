@@ -174,6 +174,18 @@ def _equivalence_example(p: PaperInput) -> str:
             "formulations have at least one equivalent in another grade.")
 
 
+def _run_plan_sentence(p: PaperInput) -> str:
+    from pipeline.paper import run_plan
+
+    plan = run_plan(p)
+    if plan is None:
+        return f"{p.api}: no reduced design met the criteria; run the full design."
+    n = sum(len(cs) for cs in plan.values())
+    listing = "; ".join(f"{g} cases {', '.join(str(c) for c in cs) or 'none'}"
+                        for g, cs in plan.items())
+    return f"{p.api}: make {n} formulations: {listing}."
+
+
 def _dt_sentence(p: PaperInput) -> str:
     q = p.manuscript.questions[3]
     if q.status == "unavailable" or p.disintegration is None:
@@ -220,6 +232,8 @@ WHY_SHORT: dict[str, str] = {
             "screening test.",
     "Fig8": "The smallest adequate design sets the cost of extending the study to "
             "further APIs.",
+    "Fig8A": "This is the shopping list for a new API: which blends and grades to make "
+             "first.",
 }
 
 
@@ -461,6 +475,8 @@ def build(inputs: list[PaperInput], records: Sequence[FigureRecord],
                  [_dt_sentence(p) for p in inputs]),
         "Fig8": ("Reduced experimental designs", "Figure, wide",
                  [_stress_sentence(p) for p in inputs]),
+        "Fig8A": ("Which formulations to make for a new API", "Figure, wide",
+                  [_run_plan_sentence(p) for p in inputs]),
     }
     why = {r.id: r.context for r in records}
     for fid, (title, layout, bullets) in fig_text.items():
