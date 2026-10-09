@@ -79,6 +79,9 @@ class Database:
     empty_replicates_dropped: int = 0
     """Replicates left out because no usable reading remained in the window."""
 
+    blank_id_readings_dropped: int = 0
+    """Concentration readings left out because their row had no ID."""
+
     spike_log: pd.DataFrame | None = None
     """One row per removed spike; see :data:`pipeline.profiles.spikes.LOG_COLUMNS`."""
 
@@ -219,6 +222,22 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
         records.append(part)
 
     long = pd.concat(records, ignore_index=True)
+    # A row with no ID belongs to no formulation: grouping leaves it out, so
+    # later per-replicate flags come back as NaN for it. Drop it here and say
+    # how many of the dropped rows held readings, since an ID typed only on the
+    # first row of each block (merged cells) would lose real data.
+    blank_id = long["id"].isna() | (long["id"].astype(str).str.strip() == "")
+    blank_id_rows = int(blank_id.sum() // len(schema.replicates))
+    blank_id_readings = int(long.loc[blank_id, "conc_ug_ml"].notna().sum())
+    long = long[~blank_id].reset_index(drop=True)
+    if blank_id_readings:
+        warnings.warn(
+            f"{blank_id_rows} row(s) of the dissolution sheet have no ID and were left "
+            f"out, taking {blank_id_readings} concentration reading(s) with them. If the "
+            "ID is written only on the first row of each formulation (merged cells), "
+            "fill it down on every row.",
+            stacklevel=2,
+        )
     # One workbook is one API. Every model downstream keys formulations on
     # (case, grade), so a second API would be averaged into the first as if
     # it were more replicates: wrong numbers with nothing to show for it.
@@ -317,6 +336,7 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
         schema=schema,
         rows_beyond_window=beyond,
         empty_replicates_dropped=empty_replicates,
+        blank_id_readings_dropped=blank_id_readings,
         spikes_removed=len(spike_log),
         spike_log=spike_log,
         readings_log=readings_log,

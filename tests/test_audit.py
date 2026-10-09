@@ -128,6 +128,18 @@ class TestBrokenWorkbooks:
         assert rep.get("mass_partially_filled_id_reps") == 0  # blank ID cannot group
         assert rep.stage_ok["B"] is True
 
+    def test_rows_without_an_id_are_dropped_and_reported(
+        self, tmp_path: Path, raw: pd.DataFrame, design_sheet: pd.DataFrame
+    ) -> None:
+        """A row with readings but no ID once crashed the load ("bad operand
+        type for unary ~: 'float'"). It is now left out and counted."""
+        frame = raw.copy().astype({"ID": object})
+        frame.loc[frame.index[-2:], "ID"] = None
+        rep = run_audit(_write(tmp_path / "noid.xlsx", frame, design_sheet))
+        _assert_grammar(rep.render())
+        assert rep.get("blank_id_readings_dropped") > 0
+        assert rep.stage_ok.get("R") is True
+
     def test_blank_replicate_is_dropped_and_reported(
         self, tmp_path: Path, raw: pd.DataFrame, design_sheet: pd.DataFrame
     ) -> None:
