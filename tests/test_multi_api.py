@@ -190,7 +190,7 @@ def test_paper_figures_span_every_api(tmp_path: Path) -> None:
     records = render_paper(inputs, tmp_path / "paper")
     ids = [r.id for r in records]
     # No disintegration data here, so Fig 7 is left out rather than drawn empty.
-    assert ids == ["Fig1", "Fig2", "Fig3", "Fig4", "Fig5", "Fig6", "Fig8"]
+    assert ids == ["Scheme1", "Fig1", "Fig2", "Fig3", "Fig4", "Fig5", "Fig6", "Fig8"]
     assert headline_response(inputs) is not None
     for name in ("captions.json", "captions.md", "Table1_design.csv", "supplementary.md"):
         assert (tmp_path / "paper" / name).exists(), name

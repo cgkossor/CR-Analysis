@@ -64,6 +64,14 @@ SURFACE_ROW_H = 2.7
 
 #: Background for each main figure: why it matters, beside its caption.
 CONTEXT: dict[str, str] = {
+    "Scheme1": (
+        "Every result in the paper is stated in one of these metrics, and each "
+        "describes a different part of the curve: the t-values and fixed-time "
+        "percentages describe timing, MDT the whole curve, the slopes the rate in "
+        "each phase, and the Weibull and Peppas parameters its shape. Defining "
+        "them once, on one curve, lets the reader interpret every later figure "
+        "without returning to the methods."
+    ),
     "Fig1": (
         "In a mixture the components sum to 100%, so no component can change on its own: "
         "raising HPMC must lower API, lactose or both. The tested blends therefore define a "
@@ -145,6 +153,99 @@ def _row_note(ax: Any, api: str) -> None:
     ax.annotate(api, xy=(0, 0.5), xycoords="axes fraction", xytext=(-46, 0),
                 textcoords="offset points", rotation=90, ha="center", va="center",
                 fontsize=8, fontweight="bold")
+
+
+# --- Scheme 1: what each metric measures -------------------------------------
+
+#: The illustrative curve: a Weibull profile, not data.
+SCHEME_F_INF, SCHEME_TD, SCHEME_BETA = 92.0, 6.0, 0.75
+
+
+def scheme1_metrics(out: Path) -> FigureRecord:
+    """One model curve, annotated with every release metric the analysis uses."""
+    from pipeline.profiles.fits import weibull
+
+    t = np.linspace(0.0, 24.0, 2401)
+    y = weibull(t, SCHEME_F_INF, SCHEME_TD, SCHEME_BETA)
+
+    def t_at(pct: float) -> float:
+        return float(np.interp(pct, y, t))
+
+    fig, (ax, bx) = pub.new_figure(pub.DOUBLE, 3.3, ncols=2,
+                                   gridspec_kw={"width_ratios": [2.3, 1]})
+    # Peppas window: the part of the curve below 60 % released.
+    t60 = t_at(60.0)
+    ax.axvspan(0, t60, color=pub.OKABE_ITO[5], alpha=0.12, lw=0)
+    ax.text(t60 / 2, 3, "Peppas fit\n(first 60 %)", ha="center", fontsize=6.5,
+            color=pub.INK)
+    ax.plot(t, y, color=pub.INK, lw=1.6)
+    # Plateau.
+    ax.axhline(SCHEME_F_INF, color=pub.MUTED, lw=0.8, ls="--")
+    ax.text(23.8, SCHEME_F_INF + 1.5, "F∞ (Weibull plateau)", ha="right", fontsize=6.5)
+    # t10 ... t80.
+    for pct, colour in ((10, 0), (25, 1), (50, 2), (80, 4)):
+        tx = t_at(pct)
+        c = pub.OKABE_ITO[colour]
+        ax.plot([0, tx], [pct, pct], color=c, lw=0.7, ls=":")
+        ax.plot([tx, tx], [0, pct], color=c, lw=0.7, ls=":")
+        ax.plot(tx, pct, "o", color=c, ms=3.5)
+        ax.text(tx + 0.25, pct - 4.5, f"t{pct}", fontsize=7, color=c, fontweight="bold")
+    # Td: where the curve reaches 63.2 % of its plateau.
+    y_td = SCHEME_F_INF * (1 - np.exp(-1.0))
+    ax.plot(SCHEME_TD, y_td, "D", color=pub.OKABE_ITO[3], ms=4)
+    ax.annotate("Td (time scale:\n63.2 % of F∞)", (SCHEME_TD, y_td), xytext=(9.5, 52),
+                fontsize=6.5, color=pub.OKABE_ITO[3],
+                arrowprops={"arrowstyle": "-", "color": pub.OKABE_ITO[3], "lw": 0.6})
+    # % released at the fixed times.
+    fixed = (1, 2, 4, 8, 12, 24)
+    ax.plot(fixed, np.interp(fixed, t, y), "s", mfc="white", mec=pub.INK, ms=4, mew=0.8)
+    ax.text(8.6, 60.0, "% released at\n1, 2, 4, 8, 12, 24 h", fontsize=6.5)
+    # Mean dissolution time.
+    dm = np.diff(y)
+    mid = 0.5 * (t[1:] + t[:-1])
+    mdt = float(np.sum(mid * dm) / np.sum(dm))
+    ax.axvline(mdt, color=pub.HIGHLIGHT, lw=0.8, ls="-.")
+    ax.text(mdt + 0.25, 8, "MDT", fontsize=7, color=pub.HIGHLIGHT, fontweight="bold")
+    # Early and late slopes.
+    # Each slope's label sits clear of the curve: right of the early one,
+    # under the late one.
+    for (a, b), label, (lx, ly, ha) in (
+        ((0.0, 2.0), "early slope (0–2 h)", (2.4, 24.0, "left")),
+        ((8.0, 24.0), "late slope (8–24 h)", (24.0, 74.0, "right")),
+    ):
+        m = (t >= a) & (t <= b)
+        k, c0 = np.polyfit(t[m], y[m], 1)
+        xs = np.array([a, b])
+        ax.plot(xs, k * xs + c0, color=pub.OKABE_ITO[0], lw=1.0, ls="--")
+        ax.text(lx, ly, label, fontsize=6.5, color=pub.OKABE_ITO[0], ha=ha)
+    pub.time_axis(ax)
+    pub.percent_axis(ax)
+
+    # Inset panel: what beta does to the shape at the same Td.
+    for beta, ls in ((0.5, "-"), (1.0, "--"), (1.8, ":")):
+        bx.plot(t, weibull(t, 100.0, SCHEME_TD, beta), color=pub.INK, ls=ls,
+                label=f"β = {beta:g}")
+    bx.set_xlim(0, 24)
+    bx.set_ylim(0, 105)
+    bx.set_xlabel("Time (h)")
+    bx.set_ylabel("Drug released (%)")
+    bx.legend(title="Same Td", fontsize=6)
+    pub.auto_minor(bx)
+    pub.label_panels([ax, bx])
+    file = pub.save(fig, out, "Scheme1_metrics")
+    return FigureRecord(
+        "Scheme1", "main", 0,
+        "Release metrics used in this work, shown on an illustrative Weibull profile "
+        f"(F∞ = {SCHEME_F_INF:g} %, Td = {SCHEME_TD:g} h, β = {SCHEME_BETA:g}); a schematic, "
+        "not measured data. (A) Times to 10, 25, 50 and 80 % released (t10 to t80); "
+        "% released at fixed times (squares); the Weibull plateau F∞ and time scale Td; "
+        "the mean dissolution time (MDT); least-squares release rates over 0 to 2 h and "
+        "8 to 24 h; and the region below 60 % released used for the Peppas exponent. "
+        "(B) The Weibull shape parameter β at a fixed Td: β < 1 gives a fast initial "
+        "release that slows, β = 1 a first-order curve, β > 1 a sigmoidal curve with an "
+        "initial lag.",
+        file,
+    )
 
 
 # --- Fig 1: the design --------------------------------------------------------
@@ -497,10 +598,13 @@ def render_paper(
               fig6_grade_swap, fig7_disintegration, fig8_reduced)
     from dataclasses import replace
 
-    records = [replace(r, context=CONTEXT.get(r.id, ""))
-               for r in (m(inputs, out, banner) for m in makers) if r is not None]
+    made = [scheme1_metrics(out)] + [m(inputs, out, banner) for m in makers]
+    records = [replace(r, context=CONTEXT.get(r.id, "")) for r in made if r is not None]
     pub.write_captions(records, out, "Manuscript figures (main)")
     _write_supplementary_index(out, supplementary or {})
+    from pipeline import deck_brief
+
+    deck_brief.write(inputs, records, out, headline_response(inputs))
     return records
 
 
