@@ -151,6 +151,29 @@ def _fit_sentence(p: PaperInput, key: str) -> str:
             f"{ra.fit.pred_r_squared:.2f}")
 
 
+def _mdt_bound_sentence(p: PaperInput) -> str:
+    from pipeline.paper import mdt_lower_bounds
+
+    bounds = mdt_lower_bounds(p)
+    if bounds is None:
+        return ""
+    return (f"{p.api}: MDT is a lower bound for {bounds[0]} of {bounds[1]} formulations, "
+            f"whose release was still rising at {config.ANALYSIS_WINDOW_H:g} h.")
+
+
+def _equivalence_example(p: PaperInput) -> str:
+    from pipeline.figures import render
+
+    best = render.best_cross_grade_set(p.analysis)
+    if best is None:
+        return ""
+    summary = p.analysis.equivalence_summary
+    return (f"{p.api}: example target case {best.target_case} ({best.target_grade}) has "
+            f"f2-similar formulations in {len(best.grades_spanned)} grades; "
+            f"{len(summary.cross_grade_targets)} of {summary.n_targets} target "
+            "formulations have at least one equivalent in another grade.")
+
+
 def _dt_sentence(p: PaperInput) -> str:
     q = p.manuscript.questions[3]
     if q.status == "unavailable" or p.disintegration is None:
@@ -184,11 +207,15 @@ WHY_SHORT: dict[str, str] = {
             "rules from one grade do not carry over to another.",
     "Fig4": "A surface that predicts formulations it was not fitted to is the basis for "
             "a formulation design space.",
+    "Fig4A": "t50 does not exist for blends that never reach 50 % released; MDT exists "
+             "for every blend, so this surface covers the whole design.",
     "Fig5": "The release mechanism governs robustness: erosion-influenced release tends "
             "to be more sensitive to hydrodynamic conditions than diffusion-controlled "
             "release.",
     "Fig6": "A change of HPMC grade is a post-approval change; f2 ≥ 50 is the "
             "regulatory similarity criterion.",
+    "Fig6A": "Seeing equivalent curves side by side makes f2 concrete, and the count "
+             "map shows which formulations have a substitute in another grade.",
     "Fig7": "Disintegration testing is fast; if it tracks dissolution it can serve as a "
             "screening test.",
     "Fig8": "The smallest adequate design sets the cost of extending the study to "
@@ -417,12 +444,19 @@ def build(inputs: list[PaperInput], records: Sequence[FigureRecord],
                  [f"Response: {_label(inputs, headline_key)}; contours show the "
                   "fitted model, points the measured blends on the same colour scale."]
                  + [s for s in (_fit_sentence(p, headline_key or "") for p in inputs) if s]),
+        "Fig4A": ("Response surface on mean dissolution time", "Figure, side",
+                  ["Alternative to Figure 4 on mean dissolution time (MDT), which every "
+                   "blend has, including those that never reach 50 % released."]
+                  + [s for s in (_fit_sentence(p, "mdt_h") for p in inputs) if s]
+                  + [_mdt_bound_sentence(p) for p in inputs]),
         "Fig5": ("Release mechanism across the design", "Figure, side",
                  [_beta_trend(p) for p in inputs]
                  + ["Range: " + "; ".join(s for s in (_beta_range(p) for p in inputs) if s)
                     + "."]),
         "Fig6": ("Interchangeability of HPMC grades", "Figure, side",
                  [_swap_sentence(p) for p in inputs]),
+        "Fig6A": ("Grade equivalence in practice", "Figure, side",
+                  [_equivalence_example(p) for p in inputs]),
         "Fig7": ("Disintegration and dissolution", "Figure, side",
                  [_dt_sentence(p) for p in inputs]),
         "Fig8": ("Reduced experimental designs", "Figure, wide",

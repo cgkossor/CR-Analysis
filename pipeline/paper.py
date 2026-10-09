@@ -466,12 +466,11 @@ def fig4a_mdt(inputs: list[PaperInput], out: Path, banner: str | None) -> Figure
         return None
     counts = []
     for p in inputs:
-        reps = p.analysis.replicates
-        if "mdt_truncated" not in reps:
+        bounds = mdt_lower_bounds(p)
+        if bounds is None:
             continue
-        flagged = reps.groupby(["case", "grade"])["mdt_truncated"].any()
-        counts.append(f"{p.api}: {int(flagged.sum())} of {len(flagged)}"
-                      if len(inputs) > 1 else f"{int(flagged.sum())} of {len(flagged)}")
+        counts.append(f"{p.api}: {bounds[0]} of {bounds[1]}"
+                      if len(inputs) > 1 else f"{bounds[0]} of {bounds[1]}")
     note = (" Alternative to Fig 4 on mean dissolution time (MDT), which is defined for "
             "every blend, including those that never reach 50% released. MDT is computed "
             f"over the {config.ANALYSIS_WINDOW_H:g} h run; for a profile still rising at the "
@@ -480,6 +479,19 @@ def fig4a_mdt(inputs: list[PaperInput], out: Path, banner: str | None) -> Figure
     from dataclasses import replace
 
     return replace(rec, caption=rec.caption + note)
+
+
+def mdt_lower_bounds(p: PaperInput) -> tuple[int, int] | None:
+    """(formulations whose MDT is a lower bound, all formulations), or None.
+
+    A formulation counts when any of its vessels was still releasing at the end
+    of the run, so its MDT over the run understates the true value.
+    """
+    reps = p.analysis.replicates
+    if "mdt_truncated" not in reps:
+        return None
+    flagged = reps.groupby(["case", "grade"])["mdt_truncated"].any()
+    return int(flagged.sum()), len(flagged)
 
 
 def _surface_figure(inputs: list[PaperInput], out: Path, banner: str | None, key: str,
