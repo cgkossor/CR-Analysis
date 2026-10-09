@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from pipeline import config
 from pipeline.doe import ternary, views
 from pipeline.figures import doe as doefig
 from pipeline.figures import publication as pub
@@ -103,6 +104,20 @@ CONTEXT: dict[str, str] = {
         "response, and the predicted-vs-actual panel, with the leave-one-out Q², is the "
         "evidence that the surface predicts formulations it was not fitted to rather than "
         "merely reproducing them."
+    ),
+    "Fig4A": (
+        "t50 does not exist for a blend that never releases half its dose, so the "
+        "slowest formulations drop out of a t50 surface and its slow corner is "
+        "extrapolated from faster blends. Mean dissolution time summarises the whole "
+        "curve and exists for every blend, so this version shows the full design "
+        "space, at the cost of reading as a lower bound where release is unfinished."
+    ),
+    "Fig6A": (
+        "An f2 value is abstract until two curves are seen side by side. The example "
+        "shows what regulatory similarity looks like for formulations made with "
+        "different grades, and the count map shows how general that is: which "
+        "formulations have a ready substitute in another grade and which have none, "
+        "which is the practical question when a grade is unavailable or changes supplier."
     ),
     "Fig5": (
         "Release rate alone does not say how the drug leaves the matrix. The Weibull shape "
@@ -434,15 +449,50 @@ def fig4_surface(inputs: list[PaperInput], out: Path, banner: str | None) -> Fig
     key = headline_response(inputs)
     if key is None:
         return None
+    return _surface_figure(inputs, out, banner, key, "Fig4", "Fig4_surface")
+
+
+def fig4a_mdt(inputs: list[PaperInput], out: Path, banner: str | None) -> FigureRecord | None:
+    """Fig 4 on mean dissolution time, which every profile has.
+
+    t50 is undefined for a blend that never reaches 50 %, so Fig 4 drops those
+    blends from its triangles. MDT keeps every blend; for one still releasing
+    at the end of the run it is a lower bound, and the caption says how many.
+    """
+    if headline_response(inputs) == "mdt_h":
+        return None  # Fig 4 already shows MDT.
+    rec = _surface_figure(inputs, out, banner, "mdt_h", "Fig4A", "Fig4A_surface_mdt")
+    if rec is None:
+        return None
+    counts = []
+    for p in inputs:
+        reps = p.analysis.replicates
+        if "mdt_truncated" not in reps:
+            continue
+        flagged = reps.groupby(["case", "grade"])["mdt_truncated"].any()
+        counts.append(f"{p.api}: {int(flagged.sum())} of {len(flagged)}"
+                      if len(inputs) > 1 else f"{int(flagged.sum())} of {len(flagged)}")
+    note = (" Alternative to Fig 4 on mean dissolution time (MDT), which is defined for "
+            "every blend, including those that never reach 50% released. MDT is computed "
+            f"over the {config.ANALYSIS_WINDOW_H:g} h run; for a profile still rising at the "
+            "end it is a lower bound on the true value"
+            + (f" (formulations affected: {'; '.join(counts)})" if counts else "") + ".")
+    from dataclasses import replace
+
+    return replace(rec, caption=rec.caption + note)
+
+
+def _surface_figure(inputs: list[PaperInput], out: Path, banner: str | None, key: str,
+                    fid: str, stem: str) -> FigureRecord | None:
     made = _surface_rows(inputs, lambda p: _usable(p.analysis.doe.by_key(key)),
-                         out, "Fig4_surface", banner, with_fit=True)
+                         out, stem, banner, with_fit=True)
     if made is None:
         return None
     file, apis = made
     label = inputs[0].analysis.doe.by_key(key)
     name = label.response.spec.label.lower() if label else key
     return FigureRecord(
-        "Fig4", "main", 4,
+        fid, "main", 4,
         f"Response surface for {name}" + (f", by API (rows: {', '.join(apis)})"
                                           if len(apis) > 1 else "")
         + ". Triangles, one per HPMC grade: the fitted mixture model over the tested blends "
@@ -531,6 +581,49 @@ def fig6_grade_swap(inputs: list[PaperInput], out: Path, banner: str | None
     )
 
 
+
+def fig6a_equivalence(inputs: list[PaperInput], out: Path, banner: str | None
+                      ) -> FigureRecord | None:
+    """Example equivalent profiles beside the count of equivalents, one row per API."""
+    from pipeline.figures import headlines
+
+    rows = []
+    for p in inputs:
+        best = render.best_cross_grade_set(p.analysis)
+        if best is not None:
+            rows.append((p, best))
+    if not rows:
+        return None
+    n = len(rows)
+    fig, axes = pub.new_figure(pub.DOUBLE, 2.9 * n, nrows=n, ncols=2, squeeze=False,
+                               width_ratios=[1.6, 1.0])
+    parts = []
+    for (p, best), (ax_a, ax_b) in zip(rows, axes, strict=True):
+        grades = render.grades_by_viscosity(p.analysis)
+        cases, counts = headlines.equivalence_counts(p.analysis, grades)
+        render.draw_equivalence(ax_a, p.analysis, best)
+        headlines.draw_equivalence_counts(fig, ax_b, counts, cases, grades)
+        if n > 1:
+            pub.header_note(ax_a, p.api)
+        summary = p.analysis.equivalence_summary
+        parts.append(
+            (f"{p.api}: " if n > 1 else "")
+            + f"example target case {best.target_case} ({best.target_grade}), with "
+            f"equivalents in {len(best.grades_spanned)} grades; "
+            f"{len(summary.cross_grade_targets)} of {summary.n_targets} targets have at "
+            "least one equivalent in another grade")
+    pub.label_panels(list(axes.flat))
+    return FigureRecord(
+        "Fig6A", "main", 6,
+        "Grade equivalence in practice" + (" (rows: one per API)" if n > 1 else "")
+        + ". Left: mean measured profiles of formulations made with different HPMC grades "
+        f"that are f2-similar (f2 ≥ {config.F2_SIMILAR_THRESHOLD:g}) to one target "
+        "formulation, with ±SD bars. Right: for every target formulation (case × grade), "
+        "the number of formulations in another grade that are f2-similar to it. "
+        + "; ".join(parts) + ".",
+        pub.save(fig, out, "Fig6A_equivalence_examples", banner=banner),
+    )
+
 # --- Fig 7: disintegration ---------------------------------------------------
 
 
@@ -605,8 +698,8 @@ def render_paper(
     for stale in list(out.glob("*.png")) + list(out.glob("*.svg")):
         stale.unlink()
     banner = _banner(inputs)
-    makers = (fig1_design, fig2_profiles, fig3_levers, fig4_surface, fig5_mechanism,
-              fig6_grade_swap, fig7_disintegration, fig8_reduced)
+    makers = (fig1_design, fig2_profiles, fig3_levers, fig4_surface, fig4a_mdt, fig5_mechanism,
+              fig6_grade_swap, fig6a_equivalence, fig7_disintegration, fig8_reduced)
     from dataclasses import replace
 
     made = [scheme1_metrics(out)] + [m(inputs, out, banner) for m in makers]

@@ -190,7 +190,10 @@ def test_paper_figures_span_every_api(tmp_path: Path) -> None:
     records = render_paper(inputs, tmp_path / "paper")
     ids = [r.id for r in records]
     # No disintegration data here, so Fig 7 is left out rather than drawn empty.
-    assert ids == ["Scheme1", "Fig1", "Fig2", "Fig3", "Fig4", "Fig5", "Fig6", "Fig8"]
+    assert ids == ["Scheme1", "Fig1", "Fig2", "Fig3", "Fig4", "Fig5", "Fig6", "Fig6A",
+                   "Fig8"]
+    # t50 is too sparse for API_B, so Fig 4 is already on MDT and needs no Fig 4A.
+    assert headline_response(inputs) == "mdt_h"
     assert headline_response(inputs) is not None
     for name in ("captions.json", "captions.md", "Table1_design.csv", "supplementary.md"):
         assert (tmp_path / "paper" / name).exists(), name
@@ -230,3 +233,20 @@ def test_a_blank_replicate_is_dropped_not_fatal(tmp_path: Path) -> None:
     code = main(["--input", str(bad), "--outputs", str(tmp_path / "o"),
                  "--dashboard", str(tmp_path / "d"), "--skip-figures"])
     assert code == 0
+
+
+def test_mdt_alternative_accompanies_a_t50_surface(tmp_path: Path) -> None:
+    """When Fig 4 is on t50, Fig 4A redraws it on MDT, which every blend has."""
+    from pipeline.analysis import run_analysis
+    from pipeline.manuscript import build
+    from pipeline.paper import PaperInput, headline_response, render_paper
+    from pipeline.run import _stress
+
+    a = run_analysis(load_database(_workbook()))
+    inputs = [PaperInput("API_1", a, _stress(a), None, build(a, None))]
+    assert headline_response(inputs) == "t50"
+    records = {r.id: r for r in render_paper(inputs, tmp_path / "paper")}
+    alt = records["Fig4A"]
+    assert alt.rank == records["Fig4"].rank
+    assert "mean dissolution time" in alt.caption and "lower bound" in alt.caption
+    assert (tmp_path / "paper" / alt.file).exists()

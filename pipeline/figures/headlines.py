@@ -127,7 +127,7 @@ def _h3(analysis: Analysis, out: Path, banner: str | None) -> FigureRecord | Non
     )
 
 
-def _equivalence_counts(analysis: Analysis, grades: list[str]) -> tuple[list[int], np.ndarray]:
+def equivalence_counts(analysis: Analysis, grades: list[str]) -> tuple[list[int], np.ndarray]:
     """Rows: cases. Columns: grades. Value: equivalents in a *different* grade."""
     cases = sorted({int(c) for c in analysis.design_points["case"]})
     counts = np.full((len(cases), len(grades)), np.nan)
@@ -139,16 +139,9 @@ def _equivalence_counts(analysis: Analysis, grades: list[str]) -> tuple[list[int
     return cases, counts
 
 
-def _h4(analysis: Analysis, out: Path, banner: str | None) -> FigureRecord | None:
-    best = render.best_cross_grade_set(analysis)
-    if best is None:
-        return None
-    grades = render.grades_by_viscosity(analysis)
-    cases, counts = _equivalence_counts(analysis, grades)
-    fig, axes = pub.new_figure(pub.DOUBLE, 2.9, ncols=2, width_ratios=[1.6, 1.0])
-    render.draw_equivalence(axes[0], analysis, best)
-
-    ax = axes[1]
+def draw_equivalence_counts(fig: Any, ax: Any, counts: np.ndarray, cases: list[int],
+                            grades: list[str]) -> None:
+    """Heatmap: for each target (case, grade), its f2 equivalents in another grade."""
     vmax = max(1.0, float(np.nanmax(counts)) if np.isfinite(counts).any() else 1.0)
     im = ax.imshow(counts, cmap="Blues", vmin=0, vmax=vmax, aspect="auto")
     for r in range(counts.shape[0]):
@@ -166,6 +159,18 @@ def _h4(analysis: Analysis, out: Path, banner: str | None) -> FigureRecord | Non
     bar = fig.colorbar(im, ax=ax, shrink=0.95, aspect=25, pad=0.02)
     bar.set_label("Equivalents in another grade")
     bar.ax.tick_params(which="both", direction="in")
+
+
+def _h4(analysis: Analysis, out: Path, banner: str | None) -> FigureRecord | None:
+    best = render.best_cross_grade_set(analysis)
+    if best is None:
+        return None
+    grades = render.grades_by_viscosity(analysis)
+    cases, counts = equivalence_counts(analysis, grades)
+    fig, axes = pub.new_figure(pub.DOUBLE, 2.9, ncols=2, width_ratios=[1.6, 1.0])
+    render.draw_equivalence(axes[0], analysis, best)
+
+    draw_equivalence_counts(fig, axes[1], counts, cases, grades)
     pub.label_panels(axes)
 
     summary = analysis.equivalence_summary
