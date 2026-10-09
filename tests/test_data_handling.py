@@ -81,7 +81,8 @@ def test_placeholder_reports_no_spikes() -> None:
     info = build(a)
     assert info["totals"]["spikes_removed"] == 0
     assert info["spikes"] == []
-    assert all(p["error_bars"] == p["points_plotted"] for p in info["plotting"])
+    # Manual pulls: a marker with an error bar on every plotted reading.
+    assert all(p["markers_with_error_bars"] == p["line_points"] for p in info["plotting"])
 
 
 def test_cox_traces_are_given_for_every_grade_and_say_they_are_a_model_slice() -> None:

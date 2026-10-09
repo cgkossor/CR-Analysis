@@ -10,7 +10,8 @@ readings behind it:
 3. **Comparison grid**: whether profiles were resampled onto the nominal
    schedule, and how many grid points were left blank because the readings
    either side were too far apart.
-4. **Plot thinning**: how many readings each measured-profile plot draws.
+4. **Plot markers**: how many readings each measured-profile line draws, and where
+   the markers with error bars sit.
 5. **Response coverage**: which formulations each DoE response leaves out
    (t50/t80 are undefined for runs that never reach 50/80 %), which is the
    usual reason a response "loses" the slow runs.
@@ -45,8 +46,8 @@ def _plot_points(analysis: Analysis) -> pd.DataFrame:
             "case": case,
             "grade": grade,
             "readings_per_replicate": int(reps.loc[(case, grade)].median()),
-            "points_plotted": int(np.isfinite(prof.mean).sum()),
-            "error_bars": int((prof.bars & np.isfinite(prof.mean)).sum()),
+            "line_points": int(np.isfinite(prof.mean).sum()),
+            "markers_with_error_bars": int(np.isfinite(prof.mmean).sum()),
         })
     return pd.DataFrame(rows)
 
@@ -84,7 +85,7 @@ def build(analysis: Analysis) -> dict[str, Any]:
             "spike_min_readings": config.SPIKE_MIN_READINGS,
             "analysis_window_h": config.ANALYSIS_WINDOW_H,
             "max_interp_gap_h": grid.max_gap_h,
-            "plot_point_stride": config.PLOT_POINT_STRIDE,
+            "plot_marker_times_h": list(config.PLOT_MARKER_TIMES_H),
         },
         "totals": {
             "readings_loaded": loaded,
@@ -217,12 +218,13 @@ def render_markdown(info: dict[str, Any], synthetic: bool) -> str:
 
     plot = pd.DataFrame(info["plotting"])
     out += [
-        "## 4. Plot thinning",
+        "## 4. Plot markers",
         "",
-        f"Measured-profile plots draw every {s['plot_point_stride']}th reading of densely "
-        "logged runs (always keeping the last), with error bars at the nominal schedule "
-        "times. Manual pulls are drawn in full. This affects the plots only, never the "
-        "analysis.",
+        "Measured-profile plots draw the replicate mean as a line through every reading. "
+        "For densely logged runs, markers with ±1 SD error bars sit only at the display "
+        "times " + ", ".join(f"{t:g}" for t in s["plot_marker_times_h"]) + " h, so the "
+        "markers stay legible; manual pulls carry a marker and bar at every pull. This "
+        "affects the plots only, never the analysis.",
         "",
         _table(plot),
         "## 5. Formulations each response leaves out",

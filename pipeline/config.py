@@ -140,10 +140,15 @@ SPIKE_MAX_RUN: Final[int] = 2
 SPIKE_MIN_READINGS: Final[int] = 30
 
 # --- Plotting measured profiles --------------------------------------------
-#: Densely logged profiles are plotted at their own sampling spacing, but only
-#: every Nth reading is drawn so markers stay distinguishable. Manual pulls are
-#: always drawn in full.
-PLOT_POINT_STRIDE: Final[int] = 2
+#: Densely logged profiles (probe logs every 30 s to 5 min) are drawn as a
+#: line through every reading, with markers and +/-1 SD error bars only at
+#: these times. Markers every reading would merge into a line and hide which
+#: case is which; the same display times for every formulation keep the
+#: markers legible and give every marker a bar. Manual pulls are drawn with a
+#: marker and bar at every pull.
+PLOT_MARKER_TIMES_H: Final[tuple[float, ...]] = (
+    0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 10.0, 12.0, 16.0, 20.0, 24.0,
+)
 
 # =============================================================================
 # PLOTTING -- AXIS LIMITS

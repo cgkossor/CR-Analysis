@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
@@ -97,10 +98,9 @@ CASE_LEGEND_TITLE = "Case: API / HPMC / lactose (wt%). Marker shape shows the AP
 
 #: How measured profiles are drawn, stated once for every caption that shows them.
 MEASURED_CAPTION = (
-    "Points are the replicate mean at the data's own sampling times, joined by straight "
-    "segments; densely logged runs show every second reading, with ±1 SD error bars at the "
-    "nominal schedule times (manual pulls: every point). Momentary spikes (bubbles, "
-    "interference) are removed before plotting."
+    "Lines are the replicate mean through every reading; markers with ±1 SD error bars "
+    "mark the mean at fixed display times (densely logged runs) or at every pull (manual "
+    "sampling). Momentary spikes (bubbles, interference) are removed before plotting."
 )
 
 
@@ -108,96 +108,87 @@ MEASURED_CAPTION = (
 class MeasuredProfile:
     """One formulation's measured release, as drawn.
 
-    ``t``/``mean``/``sd`` sit at the data's own sampling spacing (thinned for
-    densely logged data); ``bars`` marks the points that carry an error bar.
+    ``t``/``mean`` are the line, at the data's own resolution. ``mt``/``mmean``/
+    ``msd`` are the markers, each with a +/-1 SD bar: the fixed display times for
+    a probe log, every pull for manual sampling.
     """
 
     t: np.ndarray
     mean: np.ndarray
-    sd: np.ndarray
-    bars: np.ndarray
+    mt: np.ndarray
+    mmean: np.ndarray
+    msd: np.ndarray
+    dense: bool
+
+
+#: Probe readings from replicates on separate clocks are merged to this
+#: resolution (30 s) for the line, the finest interval in the logged schedules.
+LINE_RESOLUTION_H = 1.0 / 120.0
 
 
 def _native_grid(times: list[np.ndarray]) -> tuple[np.ndarray, bool]:
     """The replicates' own schedule, and whether it is densely logged.
 
     Dense means a probe log: any replicate with at least
-    :data:`config.SPIKE_MIN_READINGS` readings, each replicate on its own clock.
-    Those get a regular grid at their median interval. Anything sparser is
-    manual pulls and keeps its real times: the union of every replicate's
-    times (to the minute), so one replicate missing a pull, or clocks a few
-    seconds apart, never turns a pulled schedule into a synthetic grid.
+    :data:`config.SPIKE_MIN_READINGS` readings. Either way the grid is the union
+    of every replicate's times inside the window: to the minute for manual
+    pulls (so one replicate missing a pull, or clocks a few seconds apart, never
+    invents a point), to 30 s for probe logs (so a schedule that starts at 30 s
+    and stretches to 5 min keeps its early detail).
     """
     window = config.ANALYSIS_WINDOW_H + 1e-9
     kept = [v[np.isfinite(v) & (v <= window)] for v in times]
     kept = [v for v in kept if v.size]
     if not kept:
         return np.array([0.0]), False
-    union = np.unique(np.round(np.concatenate(kept) * 60.0) / 60.0)
     dense = max(v.size for v in kept) >= config.SPIKE_MIN_READINGS
-    if not dense:
-        return union, False
-    diffs = np.concatenate([np.diff(v) for v in kept if v.size > 1])
-    diffs = diffs[diffs > 1e-9]
-    if not diffs.size:
-        return union, False
-    step = float(np.median(diffs))
-    # Out to the longest replicate; the mean is blank wherever any replicate
-    # has stopped, which shows the truncation instead of hiding it.
-    end = min(max(float(v.max()) for v in kept), config.ANALYSIS_WINDOW_H)
-    grid = np.arange(0.0, end + 1e-9, step)
-    if end - grid[-1] > 1e-6:
-        grid = np.append(grid, end)
-    else:
-        grid[-1] = end  # snap float drift, so the 24 h point is exactly 24 h
-    return grid, True
+    step = LINE_RESOLUTION_H if dense else 1.0 / 60.0
+    union = np.unique(np.round(np.concatenate(kept) / step) * step)
+    return union, dense
+
+
+def _project(reps: list[pd.DataFrame], grid: np.ndarray, gap: float | None) -> np.ndarray:
+    return np.vstack([
+        project_onto_grid(r["time_h"].to_numpy(dtype=float),
+                          r["pct_released"].to_numpy(dtype=float), grid, gap)
+        for r in reps
+    ])
+
+
+def _mean_sd(stacked: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    ok = np.isfinite(stacked).all(axis=0)
+    mean = np.where(ok, stacked.mean(axis=0), np.nan)
+    sd = np.where(ok, stacked.std(axis=0, ddof=1) if stacked.shape[0] > 1 else 0.0, np.nan)
+    return mean, sd
 
 
 def measured_profiles(analysis: Analysis) -> dict[tuple[int, str], MeasuredProfile]:
-    """Mean and SD across replicates at the data's own sampling spacing.
+    """Mean and SD across replicates, for the line and for the markers.
 
     Each replicate is projected onto the common grid on its own clock before
-    averaging, as ``analysis._mean_profiles`` does. Densely logged data keep only
-    every :data:`config.PLOT_POINT_STRIDE`-th point (plus the last), and carry
-    error bars only at the point nearest each analysis-grid time, so bars stay
-    readable; manual pulls are drawn in full with a bar on every point.
+    averaging, as ``analysis._mean_profiles`` does, so probes logging a few
+    seconds apart average correctly.
     """
-    schedule = np.asarray(analysis.time_grid, dtype=float)
     gap = analysis.time_grid_info.max_gap_h
     out: dict[tuple[int, str], MeasuredProfile] = {}
     for (case, grade), group in analysis.db.profiles.groupby(["case", "grade"]):
         reps = [r.sort_values("time_h") for _, r in group.groupby("replicate")]
-        grid, dense = _native_grid([r["time_h"].to_numpy(dtype=float) for r in reps])
-        stacked = np.vstack([
-            project_onto_grid(r["time_h"].to_numpy(dtype=float),
-                              r["pct_released"].to_numpy(dtype=float), grid, gap)
-            for r in reps
-        ])
         # Same rule as the analysis: a replicate that stops early is left out
         # when two or more others run to the end.
         if len(reps) > 1:
             ends = [float(r["time_h"].max()) for r in reps]
             done = [e >= max(ends) - 0.5 for e in ends]
             if 2 <= sum(done) < len(reps):
-                stacked = stacked[np.array(done)]
-        ok = np.isfinite(stacked).all(axis=0)
-        mean = np.where(ok, stacked.mean(axis=0), np.nan)
-        sd = np.where(ok, stacked.std(axis=0, ddof=1) if stacked.shape[0] > 1 else 0.0,
-                      np.nan)
+                reps = [r for r, d in zip(reps, done, strict=True) if d]
+        grid, dense = _native_grid([r["time_h"].to_numpy(dtype=float) for r in reps])
+        mean, sd = _mean_sd(_project(reps, grid, gap))
         if dense:
-            keep = np.zeros(grid.size, dtype=bool)
-            keep[:: config.PLOT_POINT_STRIDE] = True
-            keep[-1] = True
-            grid, mean, sd = grid[keep], mean[keep], sd[keep]
-            spacing = float(np.median(np.diff(grid))) if grid.size > 1 else 0.0
-            bars = np.zeros(grid.size, dtype=bool)
-            for s in schedule:
-                k = int(np.argmin(np.abs(grid - s)))
-                if abs(grid[k] - s) <= spacing / 2 + 1e-9:
-                    bars[k] = True
+            lo, hi = float(np.nanmin(grid)), float(np.nanmax(grid))
+            mt = np.array([x for x in config.PLOT_MARKER_TIMES_H if lo - 1e-9 <= x <= hi + 1e-9])
+            mmean, msd = _mean_sd(_project(reps, mt, gap)) if mt.size else (mt, mt)
         else:
-            bars = np.ones(grid.size, dtype=bool)
-        out[(int(case), str(grade))] = MeasuredProfile(grid, mean, sd, bars)
+            mt, mmean, msd = grid, mean, sd
+        out[(int(case), str(grade))] = MeasuredProfile(grid, mean, mt, mmean, msd, dense)
     return out
 
 
@@ -210,20 +201,18 @@ def draw_measured(
     filled: bool = True,
     label: str | None = None,
 ) -> None:
-    """Measured means as markers joined by straight segments, ±1 SD error bars.
+    """The mean as a thin line through every reading; markers with ±1 SD bars.
 
-    The segments break wherever the mean is missing, so a hole in the record is
+    The line breaks wherever the mean is missing, so a hole in the record is
     never bridged.
     """
-    ax.plot(
-        prof.t, prof.mean, marker=marker, linestyle="-", linewidth=0.6, color=colour,
-        markersize=2.6, markerfacecolor=colour if filled else "white",
-        markeredgecolor=colour, markeredgewidth=0.6, label=label,
-    )
-    m = prof.bars & np.isfinite(prof.mean)
+    ax.plot(prof.t, prof.mean, linestyle="-", linewidth=0.7, color=colour, label=label)
+    m = np.isfinite(prof.mmean)
     ax.errorbar(
-        prof.t[m], prof.mean[m], yerr=np.nan_to_num(prof.sd[m]), fmt="none",
-        ecolor=colour, elinewidth=0.5, capsize=1.4, capthick=0.5,
+        prof.mt[m], prof.mmean[m], yerr=np.nan_to_num(prof.msd[m]), fmt=marker,
+        color=colour, ecolor=colour, markersize=3.2,
+        markerfacecolor=colour if filled else "white", markeredgecolor=colour,
+        markeredgewidth=0.6, elinewidth=0.5, capsize=1.4, capthick=0.5,
     )
 
 

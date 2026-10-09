@@ -105,21 +105,29 @@ def test_manual_pulls_are_plotted_in_full_with_a_bar_on_every_point() -> None:
 
     analysis = run_analysis(load_database(_database()))
     for prof in measured_profiles(analysis).values():
+        assert not prof.dense
         assert prof.t.size == analysis.time_grid.size
-        assert prof.bars.all()
+        assert prof.mt.size == prof.t.size, "manual pulls: a marker on every pull"
 
 
-def test_dense_logs_are_thinned_with_bars_on_the_schedule() -> None:
+def test_dense_logs_keep_every_reading_and_mark_fixed_times() -> None:
+    """The 30 s / 1 / 2 / 5 min probe schedule: line at full resolution, markers
+    with error bars only at the fixed display times."""
     import numpy as np
 
     from pipeline import config
     from pipeline.figures.render import _native_grid
 
-    t = np.arange(0.0, 24.0 + 1e-9, 1 / 6)
-    grid, dense = _native_grid([t, t + 0.7 / 60, t + 1.4 / 60])
+    t = np.concatenate([
+        np.arange(0.0, 0.5, 0.5 / 60), np.arange(0.5, 1.0, 1 / 60),
+        np.arange(1.0, 2.0, 2 / 60), np.arange(2.0, 24.0 + 1e-9, 5 / 60),
+    ])
+    grid, dense = _native_grid([t, t + 0.3 / 60, t + 0.6 / 60])
     assert dense
-    assert grid[0] == 0.0 and grid[-1] == config.ANALYSIS_WINDOW_H
-    assert np.allclose(np.diff(grid), 1 / 6)
+    early = grid[grid < 0.5]
+    assert early.size >= 60, "the 30 s readings of the first half hour were thinned away"
+    assert grid[-1] >= config.ANALYSIS_WINDOW_H - 1 / 60
+    assert config.PLOT_MARKER_TIMES_H[0] < 0.5 and config.PLOT_MARKER_TIMES_H[-1] == 24.0
 
 
 def test_spread_labels_enforces_the_gap() -> None:
