@@ -353,7 +353,14 @@ def _levels(lo: float, hi: float) -> Any:
 
 
 def _draw_triangle(ax: Axes, reg: ternary.Region) -> None:
-    """Outline, real-wt% grid lines and corner labels of the pseudocomponent triangle."""
+    """Outline, real-wt% grid lines and corner labels of the pseudocomponent triangle.
+
+    Every label sits inside the axes limits and is left out of the layout
+    calculation. Labels poking outside the axes made the layout engine reserve
+    margin for them on top of the axes' own padding, and an equal-aspect
+    triangle shrinks in both directions when its width does: the triangles came
+    out at about a third of their panel.
+    """
     c = ternary.CORNERS
     ax.plot([*c[:, 0], c[0, 0]], [*c[:, 1], c[0, 1]], color=pub.INK, lw=0.8, zorder=4)
     centre = c.mean(axis=0)
@@ -369,18 +376,21 @@ def _draw_triangle(ax: Axes, reg: ternary.Region) -> None:
         out = np.array([x0, y0]) - centre
         out = out / (np.linalg.norm(out) or 1.0) * 0.045
         i = ternary.COMPONENTS.index(t.component)
-        ax.text(x0 + out[0], y0 + out[1], f"{t.value:g}",
-                ha="center", va="center", fontsize=5, color=pub.series_colour(i + 3))
+        ax.text(x0 + out[0], y0 + out[1], f"{t.value:g}", ha="center", va="center",
+                fontsize=5.5, color=pub.series_colour(i + 3), in_layout=False)
+    # Corner names below the two base corners, anchored inward so neighbouring
+    # panels never run together, and above the apex.
     for i, name in enumerate(ternary.COMPONENTS):
         hi = (reg.lower[i] + reg.span) * 100.0
         x, y = c[i]
-        ha = {0: "right", 1: "left", 2: "center"}[i]
-        dy = {0: -0.05, 1: -0.05, 2: 0.03}[i]
+        dy = {0: -0.115, 1: -0.115, 2: 0.045}[i]
+        ha = {0: "left", 1: "right", 2: "center"}[i]
         ax.text(x, y + dy, f"{ternary.LABELS[name]} {hi:.0f}%", ha=ha, va="center",
-                fontsize=6.5, color=pub.series_colour(i + 3))
+                fontsize=6.5, fontweight="bold", color=pub.series_colour(i + 3),
+                in_layout=False)
     ax.set_aspect("equal")
-    ax.set_xlim(-0.12, 1.12)
-    ax.set_ylim(-0.1, 0.95)
+    ax.set_xlim(-0.1, 1.1)
+    ax.set_ylim(-0.16, 0.92)
     ax.axis("off")
 
 

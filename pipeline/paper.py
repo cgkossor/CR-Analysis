@@ -58,8 +58,11 @@ def headline_response(inputs: list[PaperInput]) -> str | None:
 
 #: Height of one API row, inches.
 ROW_H = 2.25
-#: Ternary rows need more height: an equal-aspect triangle is as tall as it is wide.
-SURFACE_ROW_H = 2.7
+#: A row of three ternaries across the full width: each triangle is about 2.2 in
+#: wide, so the row needs about 2.3 in including its grade labels.
+SURFACE_ROW_H = 2.35
+#: The row of predicted-vs-actual panels under the ternaries in Fig 4.
+FIT_ROW_H = 2.6
 
 
 #: Background for each main figure: why it matters, beside its caption.
@@ -386,6 +389,13 @@ def _surface_rows(
     inputs: list[PaperInput], pick: Any, out: Path, stem: str, banner: str | None,
     with_fit: bool,
 ) -> tuple[str, list[str]] | None:
+    """One row of ternaries per API at the full figure width.
+
+    An equal-aspect triangle shrinks in height whenever it loses width, so the
+    triangles get the whole row: sharing it with the fit panel had squeezed
+    them to a third of their space. The predicted-vs-actual panels, when
+    wanted, form one final row, one panel per API.
+    """
     rows = [(p, pick(p)) for p in inputs]
     rows = [(p, ra) for p, ra in rows if ra is not None]
     if not rows:
@@ -395,27 +405,27 @@ def _surface_rows(
     pub.apply_style()
     import matplotlib.pyplot as plt
 
-    fig = plt.figure(figsize=(pub.DOUBLE, SURFACE_ROW_H * n + 0.3), layout="constrained")
-    subs = fig.subfigures(n, 1, squeeze=False)
+    heights = [SURFACE_ROW_H] * n + ([FIT_ROW_H] if with_fit else [])
+    fig = plt.figure(figsize=(pub.DOUBLE, sum(heights) + 0.2), layout="constrained")
+    subs = fig.subfigures(len(heights), 1, squeeze=False, height_ratios=heights)
     letters: list[Any] = []
-    for (p, ra), sub in zip(rows, subs[:, 0], strict=True):
-        # Ternaries (with their own colour bar) on the left; the fit panel, when
-        # wanted, in a column of its own so the colour bar never crowds it.
-        if with_fit:
-            left, right = sub.subfigures(1, 2, width_ratios=[len(grades) + 0.6, 1.25])
-        else:
-            left, right = sub, None
-        axes = list(np.atleast_1d(left.subplots(1, len(grades))))
+    for (p, ra), sub in zip(rows, subs[:n, 0], strict=True):
+        axes = list(np.atleast_1d(sub.subplots(1, len(grades))))
         view = views.ternary_view(ra, p.analysis.design_points)
-        doefig.draw_ternary(left, axes, ra, view)
-        if right is not None:
-            fax = right.subplots(1, 1)
-            doefig.draw_pred_actual(fax, ra, views.fitted_pairs(ra, p.analysis.design_points),
-                                    grades, compact=True)
-            axes.append(fax)
+        doefig.draw_ternary(sub, axes, ra, view)
         if n > 1:
             sub.suptitle(p.api, x=0.01, ha="left", fontsize=8, fontweight="bold")
         letters += axes
+    if with_fit:
+        fit_axes = list(np.atleast_1d(subs[n, 0].subplots(1, max(n, 2))))
+        for fax, (p, ra) in zip(fit_axes, rows, strict=False):
+            doefig.draw_pred_actual(fax, ra, views.fitted_pairs(ra, p.analysis.design_points),
+                                    grades, compact=True)
+            if n > 1:
+                pub.header_note(fax, p.api)
+        for spare in fit_axes[len(rows):]:
+            spare.set_visible(False)
+        letters += fit_axes[:len(rows)]
     pub.label_panels(letters)
     return pub.save(fig, out, stem, banner=banner), [p.api for p, _ in rows]
 
@@ -438,8 +448,9 @@ def fig4_surface(inputs: list[PaperInput], out: Path, banner: str | None) -> Fig
         + ". Triangles, one per HPMC grade: the fitted mixture model over the tested blends "
         "(background) with each measured blend filled with its measured value on the same "
         "colour scale; a blend that stands out from its surroundings is one the model does "
-        "not fit. Right: measured against predicted for every formulation, with the 1:1 "
-        "line, R² and the leave-one-out predicted R² (Q²).",
+        "not fit. Bottom row: measured against predicted for every formulation"
+        + (", one panel per API" if len(apis) > 1 else "")
+        + ", with the 1:1 line, R² and the leave-one-out predicted R² (Q²).",
         file,
     )
 
