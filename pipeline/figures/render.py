@@ -204,9 +204,15 @@ def draw_measured(
     """The mean as a thin line through every reading; markers with ±1 SD bars.
 
     The line breaks wherever the mean is missing, so a hole in the record is
-    never bridged.
+    never bridged. The legend entry is an empty proxy carrying both the line
+    and the marker: series of one grade share a colour, and only the marker
+    and its fill tell them apart.
     """
-    ax.plot(prof.t, prof.mean, linestyle="-", linewidth=0.7, color=colour, label=label)
+    ax.plot(prof.t, prof.mean, linestyle="-", linewidth=0.7, color=colour)
+    if label is not None:
+        ax.plot([], [], linestyle="-", linewidth=0.7, color=colour, marker=marker,
+                markersize=3.5, markerfacecolor=colour if filled else "white",
+                markeredgecolor=colour, markeredgewidth=0.6, label=label)
     m = np.isfinite(prof.mmean)
     ax.errorbar(
         prof.mt[m], prof.mmean[m], yerr=np.nan_to_num(prof.msd[m]), fmt=marker,
