@@ -70,7 +70,8 @@ def render(
     records: list[FigureRecord] = []
     records += levers.render(analysis, ms.decompositions, out_dir, banner)
     records += grade_swap.render(analysis, ms.swaps, out_dir, banner)
-    records += shear_proxy.render(ms.shear_points, out_dir, banner)
+    records += shear_proxy.render(ms.shear_points, out_dir, banner,
+                                  shear_proxy.pooled_fit(dt) if dt is not None else None)
     records += disintegration_link.render(dt, out_dir, banner)
     pub.write_captions(records, out_dir, "Manuscript figures")
     return records

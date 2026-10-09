@@ -189,18 +189,34 @@ def answer(
     ), pts
 
 
-def render(pts: list[ShearPoint], out: Path, banner: str | None) -> list[FigureRecord]:
-    """(A) index against HPMC content by grade; (B) index by grade."""
+def render(pts: list[ShearPoint], out: Path, banner: str | None,
+           fit: Any = None) -> list[FigureRecord]:
+    """(A) the pooled fit the index is measured from; (B) index against HPMC
+    content by grade; (C) index by grade.
+
+    Panel A shows ln DT against ln Td with the pooled Deming line. Each
+    formulation's vertical gap to the line is its index (in ln units, so
+    index x ln 10), drawn as a stick: a grade sitting wholly to one side of
+    the line is a sign that the pooled line leaves a grade effect in the index.
+    """
     from pipeline.figures import publication as pub
 
     if len(pts) < 4:
         return []
     grades = sorted({p.grade for p in pts},
                     key=lambda g: next(p.viscosity_cp for p in pts if p.grade == g))
-    fig, (ax_a, ax_b) = pub.new_figure(pub.DOUBLE, 2.8, ncols=2)
+    fig, (ax_f, ax_a, ax_b) = pub.new_figure(pub.DOUBLE, 2.8, ncols=3,
+                                             width_ratios=[1.15, 1, 0.8])
     for i, g in enumerate(grades):
         st = pub.grade_style(g, i)
         gp = sorted((p for p in pts if p.grade == g), key=lambda p: p.hpmc_wt)
+        td = np.array([p.td_h for p in gp])
+        dt = np.array([p.dt_h for p in gp])
+        if fit is not None:
+            expected = np.exp(fit.intercept + fit.slope * np.log(td))
+            ax_f.vlines(td, dt, expected, color=st.colour, lw=0.6, alpha=0.7, zorder=2)
+        ax_f.plot(td, dt, ls="none", marker=st.marker, color=st.colour, ms=4,
+                  markeredgecolor="black", markeredgewidth=0.4, label=g, zorder=3)
         ax_a.plot([p.hpmc_wt for p in gp], [p.index for p in gp], ls="none",
                   marker=st.marker, color=st.colour, ms=4, label=g)
         ys = [p.index for p in gp]
@@ -208,23 +224,41 @@ def render(pts: list[ShearPoint], out: Path, banner: str | None) -> list[FigureR
                      s=14, color=st.colour, marker=st.marker)
         if ys:
             ax_b.hlines(np.median(ys), i - 0.25, i + 0.25, color=pub.INK, lw=1)
+    td_all = np.array([p.td_h for p in pts])
+    if fit is not None:
+        grid = np.geomspace(td_all.min() / 1.2, td_all.max() * 1.2, 50)
+        ax_f.plot(grid, np.exp(fit.intercept + fit.slope * np.log(grid)), color=pub.INK,
+                  lw=1.1, label=f"pooled fit, slope {fit.slope:.2f}", zorder=4)
+    from matplotlib.ticker import FuncFormatter
+
+    ax_f.set_xscale("log")
+    ax_f.set_yscale("log")
+    for axis in (ax_f.xaxis, ax_f.yaxis):
+        axis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax_f.set_xlabel("Weibull Td (h)")
+    ax_f.set_ylabel("Disintegration time, DT (h)")
+    ax_f.legend(frameon=False, loc="upper left", fontsize=6)
     for ax in (ax_a, ax_b):
         ax.axhline(0, color=pub.MUTED, lw=0.6, ls="--")
         ax.set_ylabel("Shear index, log$_{10}$(DT$_{pred}$ / DT)")
     ax_a.set_xlabel("HPMC (wt%)")
-    ax_a.legend(frameon=False, loc="best")
     pub.auto_minor(ax_a)
     ax_b.set_xticks(range(len(grades)), grades)
     pub.categorical(ax_b, "x")
-    pub.label_panels([ax_a, ax_b])
+    pub.label_panels([ax_f, ax_a, ax_b])
     file = pub.save(fig, out, FIGURE_ID, banner=banner)
+    line = (f"ln DT = {fit.intercept:.2f} + {fit.slope:.2f} ln Td, n = {fit.n}"
+            if fit is not None else "the pooled fit")
     caption = (
-        "Shear-sensitivity proxy. The index is log10 of the disintegration time "
-        "predicted from the paddle-dissolution time scale Td (pooled Deming fit of ln DT "
-        "on ln Td) over the measured disintegration time under basket-and-disc agitation; "
-        "positive values mean a tablet breaks up earlier under agitation than its release "
-        "speed predicts. (A) Index against HPMC content, by "
-        "grade. (B) Index by grade; bars are medians. A proxy from two different "
-        "apparatus, not a direct measurement of the response to paddle speed."
+        "Shear-sensitivity proxy. (A) Disintegration time against the paddle-dissolution "
+        f"time scale Td on log axes, with the pooled Deming fit across all grades ({line}). "
+        "The vertical stick from each formulation to the line is its shear index: points "
+        "below the line break up earlier under basket-and-disc agitation than their "
+        "release speed predicts (positive index), points above it later. A grade lying "
+        "wholly on one side of the line carries a grade offset into the index. "
+        "(B) Index against HPMC content, by grade. (C) Index by grade; bars are medians. "
+        "Tablets still intact at the end of the disintegration test have no DT and are "
+        "not shown. A proxy from two different apparatus, not a direct measurement of the "
+        "response to paddle speed."
     )
     return [pub.FigureRecord(FIGURE_ID, "Q3", 3, caption, file)]
