@@ -199,3 +199,34 @@ def test_paper_figures_span_every_api(tmp_path: Path) -> None:
     # Every main figure says why it matters, beside its caption.
     assert all(c["context"] for c in caps)
     assert "Why it matters." in (tmp_path / "paper" / "captions.md").read_text(encoding="utf-8")
+
+
+def _blank_replicate(source: Path, dest: Path, column: str, ids: int) -> Path:
+    """Copy ``source`` with ``column`` emptied for the first ``ids`` IDs."""
+    wb = openpyxl.load_workbook(source)
+    ws = wb["Dissolution"]
+    header = [c.value for c in ws[1]]
+    col = header.index(column) + 1
+    id_col = header.index("ID") + 1
+    seen: list[object] = []
+    for r in range(2, ws.max_row + 1):
+        rid = ws.cell(r, id_col).value
+        if rid not in seen:
+            seen.append(rid)
+        if len(seen) <= ids:
+            ws.cell(r, col).value = None
+    wb.save(dest)
+    return dest
+
+
+def test_a_blank_replicate_is_dropped_not_fatal(tmp_path: Path) -> None:
+    """A vessel with no readings used to crash the metrics table (KeyError 'weibull')."""
+    header = [c.value for c in openpyxl.load_workbook(_workbook())["Dissolution"][1]]
+    conc = next(h for h in header if str(h).lower().startswith("conc_"))
+    bad = _blank_replicate(_workbook(), tmp_path / "blank_rep.xlsx", conc, 2)
+    with pytest.warns(UserWarning, match="no usable reading"):
+        db = load_database(bad)
+    assert db.profiles.groupby(["id", "replicate"]).size().min() > 0
+    code = main(["--input", str(bad), "--outputs", str(tmp_path / "o"),
+                 "--dashboard", str(tmp_path / "d"), "--skip-figures"])
+    assert code == 0

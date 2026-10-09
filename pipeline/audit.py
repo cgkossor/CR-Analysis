@@ -517,6 +517,7 @@ def _ingest(r: AuditReport, path: Path, db: Database | None) -> Database:
     r.add("C", "rows_beyond_window_dropped", db.rows_beyond_window)
     r.add("C", "spike_filter_on", bool(config.SPIKE_FILTER))
     r.add("C", "spike_readings_removed", db.spikes_removed)
+    r.add("C", "empty_replicates_dropped", db.empty_replicates_dropped)
     r.add(
         "C",
         "time_unit_enum_1min_2h",

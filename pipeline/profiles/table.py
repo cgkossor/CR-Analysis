@@ -24,7 +24,13 @@ import numpy as np
 import pandas as pd
 
 from pipeline.io.load import Database
+from pipeline.profiles.fits import FitResult
 from pipeline.profiles.metrics import ProfileMetrics, extract_metrics
+
+
+def _fit(metrics: ProfileMetrics, name: str) -> FitResult:
+    """The named fit, or an unfitted one when the profile had nothing to fit."""
+    return metrics.fits.get(name) or FitResult(name, note="no usable readings")
 
 
 def _row_from_metrics(metrics: ProfileMetrics) -> dict[str, object]:
@@ -48,7 +54,7 @@ def _row_from_metrics(metrics: ProfileMetrics) -> dict[str, object]:
     row["peak_pct"] = metrics.peak_pct
     row["n_points"] = metrics.n_points
 
-    weibull = metrics.fits["weibull"]
+    weibull = _fit(metrics, "weibull")
     row["weibull_valid"] = weibull.valid
     row["weibull_f_inf"] = weibull.params.get("f_inf", float("nan"))
     row["weibull_td"] = weibull.params.get("td", float("nan"))
@@ -62,7 +68,7 @@ def _row_from_metrics(metrics: ProfileMetrics) -> dict[str, object]:
         else float("nan")
     )
 
-    peppas = metrics.fits["peppas"]
+    peppas = _fit(metrics, "peppas")
     row["peppas_valid"] = peppas.valid
     row["peppas_k"] = peppas.params.get("k", float("nan"))
     row["peppas_n"] = peppas.params.get("n", float("nan"))
@@ -70,7 +76,7 @@ def _row_from_metrics(metrics: ProfileMetrics) -> dict[str, object]:
     row["peppas_n_points"] = peppas.n_points
 
     for name in ("higuchi", "first_order"):
-        fit = metrics.fits[name]
+        fit = _fit(metrics, name)
         row[f"{name}_valid"] = fit.valid
         row[f"{name}_r2"] = fit.r_squared
         row[f"{name}_rmse"] = fit.rmse

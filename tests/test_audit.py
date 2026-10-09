@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pipeline.audit import REPORT_LINE, AuditReport, main, module_index, run_audit
+from pipeline.audit import REPORT_LINE, AuditReport, main, run_audit
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -128,19 +128,21 @@ class TestBrokenWorkbooks:
         assert rep.get("mass_partially_filled_id_reps") == 0  # blank ID cannot group
         assert rep.stage_ok["B"] is True
 
-    def test_blank_replicate_crash_is_located(
+    def test_blank_replicate_is_dropped_and_reported(
         self, tmp_path: Path, raw: pd.DataFrame, design_sheet: pd.DataFrame
     ) -> None:
+        """A replicate with no readings once crashed the analysis (KeyError
+        'weibull'). It is now left out at load, counted, and the run completes."""
         frame = raw.copy()
         frame.loc[frame["ID"] == frame["ID"].iloc[0], "conc_3 [ug_ml]"] = np.nan
+        # The audit captures warnings itself (counted as warn_other), so the
+        # drop is checked through its own counter.
         rep = run_audit(_write(tmp_path / "blank.xlsx", frame, design_sheet))
         _assert_grammar(rep.render())
         assert rep.get("replicates_entirely_blank") == 1
-        assert rep.get("profiles_with_zero_finite_points") == 1
-        if rep.stage_ok.get("R") is False:
-            mod = rep.get("error_frame1_module")
-            assert isinstance(mod, int) and 0 <= mod < len(module_index())
-            assert isinstance(rep.get("error_frame1_line"), int)
+        assert rep.get("empty_replicates_dropped") == 1
+        assert rep.get("profiles_with_zero_finite_points") == 0
+        assert rep.stage_ok.get("R") is True
 
     def test_text_in_a_numeric_cell(
         self, tmp_path: Path, raw: pd.DataFrame, design_sheet: pd.DataFrame

@@ -14,9 +14,11 @@ The source file is opened read-only and never written (G8).
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from pipeline import config
@@ -73,6 +75,9 @@ class Database:
 
     spikes_removed: int = 0
     """Readings dropped as momentary spikes (bubbles, interference)."""
+
+    empty_replicates_dropped: int = 0
+    """Replicates left out because no usable reading remained in the window."""
 
     spike_log: pd.DataFrame | None = None
     """One row per removed spike; see :data:`pipeline.profiles.spikes.LOG_COLUMNS`."""
@@ -249,6 +254,23 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
     long, beyond = _apply_window(long, config.ANALYSIS_WINDOW_H)
     in_window = long.groupby(["id", "replicate"]).size().rename("in_window")
     long, spike_log = remove_spikes(long)
+    # A replicate with no usable reading left (blank concentrations, or every
+    # time past the window, as when minutes are read as hours) is not a
+    # replicate: drop it here, where it is counted, rather than let every
+    # later step meet a profile with nothing in it.
+    usable = np.isfinite(long["pct_released"]) & np.isfinite(long["time_h"])
+    has_data = usable.groupby([long["id"], long["replicate"]]).transform("any")
+    empty_replicates = int(
+        long.loc[~has_data, ["id", "replicate"]].drop_duplicates().shape[0]
+    )
+    long = long[has_data].reset_index(drop=True)
+    if empty_replicates:
+        warnings.warn(
+            f"{empty_replicates} replicate(s) have no usable reading inside the "
+            f"{config.ANALYSIS_WINDOW_H:g} h window and were left out. Check for blank "
+            "concentration columns or a time unit read wrongly.",
+            stacklevel=2,
+        )
     kept = long.groupby(["id", "replicate"]).size().rename("kept")
     readings_log = pd.concat([loaded, in_window, kept], axis=1).fillna(0).astype(int)
     readings_log["beyond_window"] = readings_log["loaded"] - readings_log["in_window"]
@@ -294,6 +316,7 @@ def load_database(path: str | Path, *, vessel_volume_ml: float | None = None) ->
         vessel_volume_ml=volume,
         schema=schema,
         rows_beyond_window=beyond,
+        empty_replicates_dropped=empty_replicates,
         spikes_removed=len(spike_log),
         spike_log=spike_log,
         readings_log=readings_log,
