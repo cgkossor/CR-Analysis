@@ -2,8 +2,10 @@
 
 This folder holds the 2D analytical advection-diffusion model of the MS5 paper (Kossor et al.,
 *Pharm Res*, in revision). The model describes drug release from a cylindrical HPMC matrix
-tablet that swells. It can fit the four model cases to new release data and predict the full
-release profile from a short early window.
+tablet that swells. It can fit the four model cases to new release data, predict the full release profile
+from a short early window, and trend the fitted parameters across formulations. In that
+trend, D0 is summarised per API and γ is trended against the weighted-average HPMC
+molecular weight of the tablet (MW_eq, §6).
 
 It is self-contained. It does not use `pipeline/` and needs only numpy, scipy, pandas and
 matplotlib, which are already in `requirements.txt`. No raw data is stored here. The only
@@ -33,6 +35,12 @@ The input is a tidy CSV with one row per tablet per time point:
 | `time_h` (or `time_min`) | sampling time |
 | `released_pct` | cumulative % of **nominal dose**, corrected for sample withdrawal |
 | `diameter_mm`, `height_mm` | **initial dry** release-tablet dimensions, **full** height |
+| `api` *(optional)* | API name; D0 is summarised per API (§6) |
+| `wt_pct_<GRADE>` *(optional)* | wt % of each HPMC grade in the tablet, for blends (e.g. `wt_pct_K15M`, `wt_pct_K100LV`) |
+| `hpmc_wt_pct` *(optional)* | wt % HPMC when there is a single grade |
+| `drug_load_pct` *(optional)* | binary drug/HPMC tablet (HPMC = 100 − load), as in MS5 |
+
+Give one of the three composition options so that MW_eq can be computed (§6).
 
 Outputs go to `outputs/swelling_model/`, which is gitignored:
 
@@ -40,6 +48,8 @@ Outputs go to `outputs/swelling_model/`, which is gitignored:
 - `predictions.csv`: predicted curves with a 95 % band.
 - `test_scores.csv`: held-out scores when `--cutoff-h` leaves later points.
 - One PNG per formulation.
+- `trends.csv` and `trends.png`: D0 per API and γ against MW_eq (§6), written when the
+  composition columns are present.
 
 The Python API:
 
@@ -268,11 +278,82 @@ Points to take from this:
 
 ---
 
-## 6. Files
+## 6. Parameter trends: D0 by API, γ by formulation composition
+
+**This is the standard way the fitted parameters are read in this project. Always do it
+once every formulation is fitted.** A single D0 or γ means little on its own. The physical
+interpretation comes from how the parameters line up across formulations:
+
+- **D0 is an API property.** Summarise it per API (median, range). Compare APIs through it.
+  It should not trend strongly with the polymer.
+- **γ is a formulation property.** Trend it against the composition through the
+  **weighted-average HPMC molecular weight of the tablet**:
+
+      MW_eq = Σ_i w_i · MW_i        w_i = mass fraction of HPMC grade i in the whole tablet
+
+  Drug, lactose and other non-polymer excipients count as MW 0. For a binary drug/HPMC
+  tablet this reduces to the MS5 form, MW_eq = (1 − x_drug)·MW_HPMC. A higher MW_eq means a
+  stronger, more entangled gel, and γ is expected to fall.
+- The nominal grade MWs used in MS5 are K100LV 29, K15M 134 and K100M 267 kDa
+  (`trends.HPMC_MW_KDA`). K4M = 86 kDa is included as a literature value that was **not**
+  used in MS5. Confirm it, and add any other grade, from supplier data
+  (`mw_eq(..., mw_kda={...})`).
+
+**What MS5 found** (24 formulations: APAP and IBU × K100LV/K15M/K100M × 20–60 % load):
+
+| Quantity | APAP (BCS I) | IBU (BCS II) | Reading |
+|---|---|---|---|
+| D0, S1 median (× 10⁻⁶ mm²/s) | 5.2 | 0.18 | about 29× apart: D0 identifies the API |
+| D0 vs MW_eq, S1 (Spearman ρ) | −0.19 | 0.2–0.4 | no polymer trend |
+| γ vs MW_eq, S1 (ρ) | **−0.90** | −0.52 | γ falls as the gel strengthens |
+| γ vs MW_eq, D1 (ρ) | −0.73 | −0.44 | same direction |
+| γ_D1/γ_S1 vs MW_eq (ρ) | 0.72 | 0.80 | more swelling, so S1's γ absorbs more geometry |
+
+For IBU, γ is not a continuous trend: K100LV sits about 5× above K15M/K100M. This was read
+as a threshold (erosion) effect. Drug load enters through MW_eq. In K15M, γ rose with load,
+which made release more linear.
+
+**How to run it:** add the composition columns (§0) and the CLI writes `trends.csv`
+(Spearman ρ, p, log–log slope, median and range per API × model × parameter) and
+`trends.png`. From Python:
+
+```python
+from swelling_model.trends import mw_eq, parameter_trends, plot_trends
+fits["mw_eq"] = [mw_eq({"K15M": 60}), ...]        # or let the CLI fill it
+parameter_trends(fits)                            # needs api, model, mw_eq, D0_e6, gamma_e9
+```
+
+**Precautions for the trends:**
+- **Trend each model on its own (S1 with S1, D1 with D1).** γ_D1 and γ_S1 differ by 5–22×
+  (§2 item 1), so pooling them across models is meaningless.
+- **S1 gives the cleaner trends.** S1 does not depend on transferred swelling. D1's γ
+  inherits any error in the swelling defaults, especially for K100M/K100LV from 200 mg
+  tablets (§3). If a D1 trend disagrees with the S1 trend, suspect the swelling input first.
+- **Exclude D0 values at the lower bound** from the D0 trend. They are not identifiable
+  (§2 item 4). `parameter_trends` drops them and counts them in `n_D0_at_bound`.
+- **Use the profile CIs (`D0_prof_lo/hi`, `gamma_prof_lo/hi`) as error bars**, on log axes.
+  Where the lower bound is 0, draw an arrow; do not clip the bar.
+- **Swelling for HPMC blends.** The defaults are per grade. For a blend, use the swelling of
+  the majority grade, or measure it. Note which you did, because D1's γ, and so the D1
+  trend, depends on it.
+- **MW_eq mixes linearly in MW.** That is a simplification (solution viscosity mixes closer
+  to log-linearly). If γ correlates poorly with MW_eq across blends, also try log-weighted MW
+  or an entanglement descriptor (polymer volume fraction over the entanglement density)
+  before concluding there is no polymer effect.
+- **Report ρ with n and p.** With 3–4 formulations per API a trend is suggestive at best.
+- **Use the trend to predict, not only to describe.** A fitted γ(MW_eq) per API and the API's
+  median D0 give D0 and γ for an *untested* composition, which `fraction_released` turns into
+  a predicted profile. Check such a prediction against at least one held-out formulation
+  before relying on it.
+
+---
+
+## 7. Files
 
 | File | Contents |
 |---|---|
 | `model.py` | series solution, static and dynamic integrals, `fraction_released`, t*, α, t_x |
+| `trends.py` | `mw_eq`, composition parsing, `parameter_trends`, `plot_trends` |
 | `swelling.py` | preloaded defaults, tablet transfer, `rate_scaling`, `fit_swelling` |
 | `fitting.py` | `fit_model`, `fit_all`, `profile_ci`, `score`, `extrapolate`, `train_window_scan` |
 | `__main__.py` | CLI and synthetic demo |

@@ -100,3 +100,26 @@ def test_fit_swelling_recovers_rates() -> None:
     d = fit_swelling(df, "K15M")
     assert d.kr_h == pytest.approx(0.25, rel=1e-4)
     assert d.Zf_Z0 == pytest.approx(6.5 / 1.4, rel=1e-4)
+
+
+def test_mw_eq_blend_and_binary() -> None:
+    from swelling_model.trends import composition_from_columns, mw_eq
+
+    assert mw_eq({"K15M": 60}) == pytest.approx(0.6 * 134)
+    assert mw_eq({"K100LV": 15, "K100M": 15}) == pytest.approx(0.15 * 29 + 0.15 * 267)
+    row = pd.Series(dict(drug_load_pct=40.0))
+    assert composition_from_columns(row, "K15M") == {"K15M": 60.0}
+    blend = pd.Series(dict(wt_pct_K15M=20.0, wt_pct_K100LV=10.0, drug_load_pct=40.0))
+    assert composition_from_columns(blend, "K15M") == {"K15M": 20.0, "K100LV": 10.0}
+
+
+def test_parameter_trends_recovers_monotone_gamma() -> None:
+    from swelling_model.trends import parameter_trends
+
+    mw = np.array([20.0, 40, 80, 120, 200])
+    fits = pd.DataFrame(dict(api="A", model="S1", formulation=[f"F{i}" for i in range(5)],
+                             mw_eq=mw, D0_e6=5.0, gamma_e9=10 / mw))
+    tr = parameter_trends(fits, models=("S1",)).set_index("param")
+    assert tr.loc["gamma", "spearman_rho"] == pytest.approx(-1.0)
+    assert tr.loc["gamma", "loglog_slope"] == pytest.approx(-1.0)
+    assert tr.loc["D0", "median"] == pytest.approx(5.0)

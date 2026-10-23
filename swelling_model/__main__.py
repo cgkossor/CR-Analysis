@@ -12,8 +12,15 @@ tablet dimensions, full height; they are averaged per formulation. Optional
 ``--swelling-data`` CSV (grade, time_h, diameter_mm, height_mm) replaces the
 preloaded swelling defaults for the grades it contains.
 
+Optional columns for the parameter trends (D0 by API, γ vs MW_eq):
+    api                         API name (defaults to "API")
+    wt_pct_<GRADE>              wt % of each HPMC grade in the tablet (blends), or
+    hpmc_wt_pct                 wt % of the single grade in ``grade``, or
+    drug_load_pct               binary drug/HPMC tablet (HPMC = 100 - load)
+
 Outputs (default outputs/swelling_model/, gitignored): fits.csv, predictions.csv,
-test_scores.csv when a cutoff leaves held-out points, and one PNG per formulation.
+test_scores.csv when a cutoff leaves held-out points, one PNG per formulation, and
+trends.csv / trends.png when MW_eq is available for >= 3 formulations.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ import pandas as pd
 from .fitting import D_SCALE, G_SCALE, extrapolate, fit_model, profile_ci
 from .model import MODEL_FLAGS, MODELS, Geometry, fraction_released
 from .swelling import fit_swelling, swelling_for_tablet
+from .trends import composition_from_columns, mw_eq, parameter_trends, plot_trends
 
 COLORS = {"D1": "magenta", "D2": "purple", "S1": "cyan", "S2": "blue"}
 
@@ -82,6 +90,9 @@ def run(df: pd.DataFrame, out: Path, cutoff_h: float | None, predict_to_h: float
     fit_rows, pred_rows, test_rows = [], [], []
     for form, d in df.groupby("formulation"):
         grade = str(d["grade"].iloc[0])
+        api = str(d["api"].iloc[0]) if "api" in d else "API"
+        comp = composition_from_columns(d.iloc[0], grade)
+        mweq = mw_eq(comp) if comp else np.nan
         geom = Geometry.from_tablet(d["diameter_mm"].mean(), d["height_mm"].mean())
         try:
             sw = swelling_for_tablet(grade, geom.R0, geom.Z0, rate_scaling=rate_scaling,
@@ -126,7 +137,8 @@ def run(df: pd.DataFrame, out: Path, cutoff_h: float | None, predict_to_h: float
                     lo, hi = profile_ci(res, tf, yf, w)
                     s = D_SCALE if w == "D0" else G_SCALE
                     row[f"{w}_prof_lo"], row[f"{w}_prof_hi"] = lo / s, hi / s
-            fit_rows.append(dict(formulation=form, grade=grade, R0_mm=geom.R0, Z0_mm=geom.Z0) | row)
+            fit_rows.append(dict(formulation=form, api=api, grade=grade, mw_eq=mweq, R0_mm=geom.R0,
+                                 Z0_mm=geom.Z0) | row)
             yy = 100 * res.predict(tg)
             cut = tg <= (cutoff_h if cutoff_h is not None else np.inf)
             ax.plot(tg[cut], yy[cut], color=COLORS[m], lw=1.4, label=m)
@@ -142,7 +154,14 @@ def run(df: pd.DataFrame, out: Path, cutoff_h: float | None, predict_to_h: float
         fig.savefig(out / f"{safe}.png")
         plt.close(fig)
         print(f"[{form}] done")
-    pd.DataFrame(fit_rows).to_csv(out / "fits.csv", index=False)
+    fits = pd.DataFrame(fit_rows)
+    fits.to_csv(out / "fits.csv", index=False)
+    if fits.mw_eq.notna().sum() >= 3 * fits.model.nunique():
+        tr = parameter_trends(fits)
+        tr.to_csv(out / "trends.csv", index=False)
+        plot_trends(fits, str(out / "trends.png"))
+        print(tr[["api", "model", "param", "n", "median", "spearman_rho", "loglog_slope"]]
+              .round(3).to_string(index=False))
     if pred_rows:
         pd.concat(pred_rows).to_csv(out / "predictions.csv", index=False)
     if test_rows:

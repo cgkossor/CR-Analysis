@@ -155,7 +155,8 @@ checks that the analysis recovers them.
 HPMC cylinder from the MS5 paper. It covers four cases: D1/D2 with dynamic
 boundaries and S1/S2 with static ones, each with D = D0 + γt or a constant D0. It
 fits the models to release data and predicts the full profile from a short early
-window. Swelling defaults for K15M, K100M and K100LV are preloaded, so only the
+window. It also trends the parameters across formulations: D0 per API, and γ against
+the weighted-average HPMC MW of the tablet. Swelling defaults for K15M, K100M and K100LV are preloaded, so only the
 initial tablet dimensions are needed. It does not depend on `pipeline/`.
 
 ```bash
