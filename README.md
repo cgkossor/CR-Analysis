@@ -149,6 +149,22 @@ with DT generated from the workbook's own dissolution. The true parameters are
 stored in the `Disintegration_Notes` sheet, and `tests/test_disintegration.py`
 checks that the analysis recovers them.
 
+## Swelling-cylinder release model (separate tool)
+
+`swelling_model/` holds the 2D analytical advection-diffusion model for a swelling
+HPMC cylinder from the MS5 paper. It covers four cases: D1/D2 with dynamic
+boundaries and S1/S2 with static ones, each with D = D0 + γt or a constant D0. It
+fits the models to release data and predicts the full profile from a short early
+window. Swelling defaults for K15M, K100M and K100LV are preloaded, so only the
+initial tablet dimensions are needed. It does not depend on `pipeline/`.
+
+```bash
+python -m swelling_model --input release.csv --cutoff-h 8 --predict-to-h 24
+```
+
+Read `swelling_model/README.md` before fitting. It covers the input format, the
+model nuances, fitting precautions and how to extrapolate.
+
 ## Verification
 
 ```bash
@@ -243,6 +259,7 @@ pipeline/
   figures/     matplotlib rendering (publication.py style, headlines.py slide set)
   export/      data.js serialisation
 dashboard/     index.html, model.js, app.js, styles.css, data.js (generated)
+swelling_model/ MS5 swelling-cylinder release model (D1, D2, S1, S2), standalone
 tests/
 ```
 

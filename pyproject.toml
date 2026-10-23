@@ -31,6 +31,12 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF"]
 # Scientific typography used deliberately in human-facing report text.
 allowed-confusables = ["σ", "–", "×", "≥", "≤", "→", "≈", "μ", "β", "ρ", "α", "−"]
 
+[tool.ruff.lint.per-file-ignores]
+# The swelling model keeps the paper's symbols (D0, R0, Zf, γ, λ²) so code and equations
+# read the same.
+"swelling_model/**" = ["N802", "N803", "N806", "N815", "RUF001", "RUF002", "RUF003"]
+"tests/test_swelling_model.py" = ["N806"]
+
 [tool.mypy]
 python_version = "3.11"
 warn_unused_configs = true
