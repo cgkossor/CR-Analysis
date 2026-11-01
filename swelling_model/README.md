@@ -22,6 +22,7 @@ The code reproduces the MS5 batch fit (`nondim_batch_fit.py`) exactly. All 24 fo
 python -m swelling_model --demo                       # synthetic check of the install
 python -m swelling_model --input release.csv          # fit all data
 python -m swelling_model --input release.csv --cutoff-h 8 --predict-to-h 24
+python -m swelling_model --input release.csv --cutoff-h 8 --delay k,lag   # early-delay probe
 python -m pytest tests/test_swelling_model.py
 ```
 
@@ -39,6 +40,7 @@ The input is a tidy CSV with one row per tablet per time point:
 | `wt_pct_<GRADE>` *(optional)* | wt % of each HPMC grade in the tablet, for blends (e.g. `wt_pct_K15M`, `wt_pct_K100LV`) |
 | `hpmc_wt_pct` *(optional)* | wt % HPMC when there is a single grade |
 | `drug_load_pct` *(optional)* | binary drug/HPMC tablet (HPMC = 100 − load), as in MS5 |
+| `lactose_wt_pct`, `api_wt_pct` *(optional)* | ternary composition, used by the early-delay probe (`EARLY_DELAY.md`) |
 
 Give one of the three composition options so that MW_eq can be computed (§6).
 
@@ -50,6 +52,8 @@ Outputs go to `outputs/swelling_model/`, which is gitignored:
 - One PNG per formulation.
 - `trends.csv` and `trends.png`: D0 per API and γ against MW_eq (§6), written when the
   composition columns are present.
+- With `--delay k,lag`: `D1+k` / `D1+lag` rows in `fits.csv` and, when `lactose_wt_pct` is
+  given, `delay_probe_*.csv` (`EARLY_DELAY.md`).
 
 The Python API:
 
@@ -355,6 +359,7 @@ parameter_trends(fits)                            # needs api, model, mw_eq, D0_
 | `model.py` | series solution, static and dynamic integrals, `fraction_released`, t*, α, t_x |
 | `trends.py` | `mw_eq`, composition parsing, `parameter_trends`, `plot_trends` |
 | `swelling.py` | preloaded defaults, tablet transfer, `rate_scaling`, `fit_swelling` |
+| `delay.py` | early-delay variants (`+lag`, first-order `+k`), `fit_delay`, `delay_probe`; see `EARLY_DELAY.md` |
 | `fitting.py` | `fit_model`, `fit_all`, `profile_ci`, `score`, `extrapolate`, `train_window_scan` |
 | `__main__.py` | CLI and synthetic demo |
 | `../tests/test_swelling_model.py` | quadrature check of the integrals, limits, parameter recovery and extrapolation, all on synthetic data |

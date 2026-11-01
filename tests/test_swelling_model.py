@@ -123,3 +123,68 @@ def test_parameter_trends_recovers_monotone_gamma() -> None:
     assert tr.loc["gamma", "spearman_rho"] == pytest.approx(-1.0)
     assert tr.loc["gamma", "loglog_slope"] == pytest.approx(-1.0)
     assert tr.loc["D0", "median"] == pytest.approx(5.0)
+
+
+# ---------------------------------------------------------------------------------
+# Early-delay variants (swelling_model/delay.py)
+# ---------------------------------------------------------------------------------
+
+def test_delay_limits_recover_base_model() -> None:
+    from swelling_model import fraction_released_k, fraction_released_lag
+
+    base = fraction_released("D1", T, 3e-6, 2.5e-9, GEOM, SW)
+    assert np.allclose(fraction_released_lag("D1", T, 3e-6, 2.5e-9, 0.0, GEOM, SW), base)
+    fast = fraction_released_k("D1", T, 3e-6, 2.5e-9, 1e4, GEOM, SW)
+    assert np.max(np.abs(fast - base)) < 1e-4
+    lag = fraction_released_lag("D1", T, 3e-6, 2.5e-9, 0.5, GEOM, SW)
+    after = T > 0.5
+    assert np.all(lag[~after] == 0.0)
+    assert np.allclose(lag[after], fraction_released("D1", T[after] - 0.5, 3e-6, 2.5e-9, GEOM, SW))
+
+
+def test_release_step_matches_slow_dissolution_limit() -> None:
+    """With very fast diffusion, M -> 1 - exp(-kt) (release is dissolution-limited)."""
+    from swelling_model import fraction_released_k
+
+    m = fraction_released_k("S1", T, 1e-1, 0.0, 0.3, GEOM)
+    assert np.max(np.abs(m - (1 - np.exp(-0.3 * T)))) < 2e-3
+
+
+def test_release_step_is_monotone_and_slower_than_base() -> None:
+    from swelling_model import fraction_released_k
+
+    tt = np.linspace(0, 12, 25)
+    m = fraction_released_k("D1", tt, 3e-6, 2.5e-9, 2.0, GEOM, SW)
+    assert np.all(np.diff(m) >= -1e-9)
+    assert np.all(m <= fraction_released("D1", tt, 3e-6, 2.5e-9, GEOM, SW) + 1e-9)
+
+
+@pytest.mark.parametrize("kind,x", [("k", 3.0), ("lag", 0.3)])
+def test_fit_delay_recovers_known_parameters(kind: str, x: float) -> None:
+    from swelling_model import fit_delay
+    from swelling_model.delay import predict_delay
+
+    noise = 0.004 * np.sin(np.arange(len(T)) * 2.3)       # deterministic, ~0.3 pp
+    y = predict_delay("D1", kind, T, 4e-6, 2e-9, x, GEOM, SW) + noise
+    r = fit_delay("D1", kind, T, y, GEOM, SW, profile=("x",))
+    assert r.p == pytest.approx([4.0, 2.0, x], rel=0.3)
+    lo, hi = r.prof_ci["x"]
+    assert lo <= x <= hi
+
+
+def test_delay_probe_reads_lactose_trend() -> None:
+    from swelling_model import delay_probe
+
+    rows = []
+    for api in ("A", "B"):
+        for grade in ("K15M", "K100M"):
+            for lac in (0, 10, 20, 30, 40):
+                rows.append(dict(model="D1+k", api=api, grade=grade, lactose_wt_pct=lac,
+                                 delay_min=30 * 10 ** (-lac / 40), D0_e6=5.0 if api == "A" else 0.2,
+                                 gamma_e9=1 + lac / 10))
+    out = delay_probe(pd.DataFrame(rows))
+    sp = out["spearman"]
+    assert np.allclose(sp[sp.param == "delay_min"].rho_vs_lactose, -1.0)
+    ols = out["ols"].set_index(["param", "term"])
+    assert ols.loc[("delay_min", "lactose_wt_pct"), "coef"] == pytest.approx(-1 / 40)
+    assert ols.loc[("delay_min", "C(api)[T.B]"), "p"] > 0.05

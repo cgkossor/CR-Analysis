@@ -130,6 +130,11 @@ In the MS5 data:
    (w_API + w_lactose, or s) for both the MS5 binary and the ternary data. If they collapse
    onto one trend, γ is "how fast soluble components open the gel" in both systems.
 
+7. **Fit an early-delay variant alongside D1 and S1.** In MS5, D1 plus a ~20 min delay fitted
+   better, predicted the 30 h profile better, and bounded D0 in more formulations. Whether
+   the delay tracks lactose, the API or neither identifies its cause. `EARLY_DELAY.md` gives
+   the procedure (`--delay k,lag`) and the pre-registered reading.
+
 ---
 
 ## 3. Pitfalls

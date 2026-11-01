@@ -18,6 +18,12 @@ Optional columns for the parameter trends (D0 by API, γ vs MW_eq):
     hpmc_wt_pct                 wt % of the single grade in ``grade``, or
     drug_load_pct               binary drug/HPMC tablet (HPMC = 100 - load)
 
+Early-delay probe (EARLY_DELAY.md): ``--delay k,lag`` also fits the base model
+(``--delay-base``, default D1, S1 when a grade has no swelling) with a first-order release
+step (+k) and with a plain lag (+lag), on the same training window. With columns
+    lactose_wt_pct (and api, grade)    plus optionally api_wt_pct, hpmc_wt_pct
+the delay, D0 and γ of these fits are regressed on composition (delay_probe_*.csv).
+
 Outputs (default outputs/swelling_model/, gitignored): fits.csv, predictions.csv,
 test_scores.csv when a cutoff leaves held-out points, one PNG per formulation, and
 trends.csv / trends.png when MW_eq is available for >= 3 formulations.
@@ -31,12 +37,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .delay import delay_probe, fit_delay
 from .fitting import D_SCALE, G_SCALE, extrapolate, fit_model, profile_ci
 from .model import MODEL_FLAGS, MODELS, Geometry, fraction_released
 from .swelling import fit_swelling, swelling_for_tablet
 from .trends import composition_from_columns, mw_eq, parameter_trends, plot_trends
 
 COLORS = {"D1": "magenta", "D2": "purple", "S1": "cyan", "S2": "blue"}
+DELAY_COLORS = {"k": "tab:blue", "lag": "tab:green"}
+COMP_COLS = ("api_wt_pct", "hpmc_wt_pct", "lactose_wt_pct", "drug_load_pct")
 
 
 def load_release(path: Path) -> pd.DataFrame:
@@ -68,6 +77,13 @@ def demo_data(seed: int = 1) -> pd.DataFrame:
     return df
 
 
+def score_arrays(t: np.ndarray, y: np.ndarray, yhat: np.ndarray) -> dict[str, float]:
+    r = y - yhat
+    return dict(n=len(y), RMSE=float(np.sqrt(np.mean(r**2))),
+                max_abs_err_pp=float(100 * np.max(np.abs(r))),
+                f2=float(50 * np.log10(100 / np.sqrt(1 + np.mean((100 * r) ** 2)))))
+
+
 def _style(ax) -> None:
     from matplotlib.ticker import AutoMinorLocator
     ax.xaxis.set_minor_locator(AutoMinorLocator())
@@ -77,7 +93,7 @@ def _style(ax) -> None:
 
 def run(df: pd.DataFrame, out: Path, cutoff_h: float | None, predict_to_h: float | None,
         rate_scaling: str, swelling_df: pd.DataFrame | None, models: tuple[str, ...],
-        n_boot: int) -> None:
+        n_boot: int, delay_kinds: tuple[str, ...] = (), delay_base: str = "D1") -> None:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -143,6 +159,21 @@ def run(df: pd.DataFrame, out: Path, cutoff_h: float | None, predict_to_h: float
             cut = tg <= (cutoff_h if cutoff_h is not None else np.inf)
             ax.plot(tg[cut], yy[cut], color=COLORS[m], lw=1.4, label=m)
             ax.plot(tg[~cut], yy[~cut], color=COLORS[m], lw=1.4, ls="--")
+        base = delay_base if (sw is not None or not MODEL_FLAGS[delay_base][0]) else "S1"
+        comp_extra = {c: float(d[c].iloc[0]) for c in COMP_COLS if c in d}
+        for kind in delay_kinds:
+            dfit = fit_delay(base, kind, t[tr], y[tr], geom, sw)
+            row = dict(formulation=form, api=api, grade=grade, mw_eq=mweq, R0_mm=geom.R0,
+                       Z0_mm=geom.Z0) | comp_extra | dfit.summary()
+            fit_rows.append(row)
+            if (~tr).sum() >= 2:
+                yh = dfit.predict(t[~tr])
+                test_rows.append(dict(formulation=form, model=dfit.label, cutoff_h=cutoff_h,
+                                      **score_arrays(t[~tr], y[~tr], yh)))
+            yy = 100 * dfit.predict(tg)
+            cut = tg <= (cutoff_h if cutoff_h is not None else np.inf)
+            ax.plot(tg[cut], yy[cut], color=DELAY_COLORS[kind], lw=1.2, label=dfit.label)
+            ax.plot(tg[~cut], yy[~cut], color=DELAY_COLORS[kind], lw=1.2, ls="--")
         ax.set_xlabel("Time (hr)")
         ax.set_ylabel("Drug Released (%)")
         ax.set_title(f"{form} ({grade})", fontsize=8)
@@ -156,11 +187,20 @@ def run(df: pd.DataFrame, out: Path, cutoff_h: float | None, predict_to_h: float
         print(f"[{form}] done")
     fits = pd.DataFrame(fit_rows)
     fits.to_csv(out / "fits.csv", index=False)
+    dl = fits[fits.model.str.contains(r"\+")] if delay_kinds else fits.iloc[:0]
+    if len(dl) and "lactose_wt_pct" in dl and dl.formulation.nunique() >= 6:
+        for name, tab in delay_probe(dl).items():
+            tab.to_csv(out / f"delay_probe_{name}.csv", index=False)
+        print("delay probe written (delay_probe_spearman/ols/api_effect.csv)")
     if fits.mw_eq.notna().sum() >= 3 * fits.model.nunique():
         tr = parameter_trends(fits)
         tr.to_csv(out / "trends.csv", index=False)
         plot_trends(fits, str(out / "trends.png"))
         print(tr[["api", "model", "param", "n", "median", "spearman_rho", "loglog_slope"]]
+              .round(3).to_string(index=False))
+    if delay_kinds:
+        cols = ["formulation", "model", "RMSE", "AICc", "delay_min", "D0_e6", "D0_bounded"]
+        print(fits[fits.model.str.contains(r"\+")][[c for c in cols if c in fits]]
               .round(3).to_string(index=False))
     if pred_rows:
         pd.concat(pred_rows).to_csv(out / "predictions.csv", index=False)
@@ -183,6 +223,8 @@ def main() -> None:
     ap.add_argument("--swelling-data", type=Path, help="own swelling CSV (overrides defaults)")
     ap.add_argument("--models", default=",".join(MODELS))
     ap.add_argument("--n-boot", type=int, default=200)
+    ap.add_argument("--delay", default="", help="early-delay fits to add: k, lag or k,lag")
+    ap.add_argument("--delay-base", default="D1", choices=["D1", "S1"])
     a = ap.parse_args()
     if not a.demo and a.input is None:
         ap.error("give --input or --demo")
@@ -190,7 +232,8 @@ def main() -> None:
     sw = pd.read_csv(a.swelling_data) if a.swelling_data else None
     cutoff = a.cutoff_h if not a.demo or a.cutoff_h else 8.0
     run(df, a.out, cutoff, a.predict_to_h or (24.0 if a.demo else None), a.rate_scaling, sw,
-        tuple(m.strip() for m in a.models.split(",")), a.n_boot)
+        tuple(m.strip() for m in a.models.split(",")), a.n_boot,
+        tuple(k.strip() for k in a.delay.split(",") if k.strip()), a.delay_base)
 
 
 if __name__ == "__main__":
